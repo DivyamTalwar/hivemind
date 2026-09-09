@@ -21,6 +21,15 @@ if ($PSVersionTable.PSVersion -lt "6.0" -or $IsWindows) { $exe=".exe" }
 exit $LASTEXITCODE
 `;
 
+// A script a USER might write. It mentions hivemind and sets a $basedir, which
+// is exactly what the old two-substring test accepted — and this function
+// deletes what it matches.
+const USER_OWNED_PS1 = `# my hivemind wrapper
+$basedir = $PSScriptRoot
+$env:HIVEMIND_WORKSPACE_ID = "payments"
+& "$basedir\\hivemind.cmd" @args
+`;
+
 describe("removeNpmPowerShellShim", () => {
   let binDir: string;
 
@@ -60,6 +69,26 @@ describe("removeNpmPowerShellShim", () => {
     expect(readFileSync(join(binDir, "hivemind.ps1"), "utf-8")).toBe(someonesScript);
   });
 
+  // The finding that mattered: a delete path must identify its target, not
+  // pattern-match two words that appear in unrelated files.
+  it("refuses a user's own script that merely mentions hivemind and $basedir", () => {
+    writeFileSync(join(binDir, "hivemind.ps1"), USER_OWNED_PS1);
+    writeFileSync(join(binDir, "hivemind.cmd"), "@echo off\r\n");
+
+    expect(removeNpmPowerShellShim({ platform: "win32", binDir })).toBe(false);
+    expect(readFileSync(join(binDir, "hivemind.ps1"), "utf-8")).toBe(USER_OWNED_PS1);
+  });
+
+  // cmd-shim's preamble without OUR package is somebody else's shim.
+  it("refuses a generated shim for a different package", () => {
+    const otherPkg = GENERATED_PS1.replace("@deeplake/hivemind", "@someone/else");
+    writeFileSync(join(binDir, "hivemind.ps1"), otherPkg);
+    writeFileSync(join(binDir, "hivemind.cmd"), "@echo off\r\n");
+
+    expect(removeNpmPowerShellShim({ platform: "win32", binDir })).toBe(false);
+    expect(existsSync(join(binDir, "hivemind.ps1"))).toBe(true);
+  });
+
   it("does nothing when there is no shim at all", () => {
     expect(removeNpmPowerShellShim({ platform: "win32", binDir })).toBe(false);
   });
@@ -82,6 +111,35 @@ describe("removeNpmPowerShellShim", () => {
 // so that call never ran and they kept a `hivemind.ps1` the execution policy
 // blocks — permanently, because no version bump was ever coming to trigger it.
 // Repairing local state must not be coupled to whether an upgrade happened.
+describe("runUpdate --dry-run does not mutate", () => {
+  // A preview that deletes a file is worse than the bug the repair was added
+  // for. The repair used to run before the dryRun check.
+  it("does not touch the shim under --dry-run", async () => {
+    let called = false;
+    const code = await runUpdate({
+      dryRun: true,
+      currentVersionOverride: "1.0.0",
+      latestVersionOverride: "2.0.0",
+      installKindOverride: { kind: "npm-global", installDir: "/tmp" },
+      removeShim: () => { called = true; },
+    });
+    expect(code).toBe(0);
+    expect(called, "removeShim ran during --dry-run").toBe(false);
+  });
+
+  // ...but a real invocation still repairs unconditionally, which is the whole
+  // point of the earlier fix.
+  it("still repairs on a real invocation", async () => {
+    let called = false;
+    await runUpdate({
+      currentVersionOverride: "9.9.9",
+      latestVersionOverride: "9.9.9",
+      removeShim: () => { called = true; },
+    });
+    expect(called).toBe(true);
+  });
+});
+
 describe("runUpdate repairs the shim before it can return early", () => {
   it("removes the shim even when already on the latest version", async () => {
     const binDir = mkdtempSync(join(tmpdir(), "hivemind-shim-update-"));

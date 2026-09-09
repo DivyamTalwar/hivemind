@@ -226,15 +226,28 @@ export function removeNpmPowerShellShim(deps: {
   // Without the .cmd, deleting the .ps1 would remove the only way to run it.
   if (!existsSync(cmd)) return false;
 
-  // Only the file we can positively identify as cmd-shim's generated wrapper.
-  // Never a glob, never a guessed path, never someone else's script.
+  // POSITIVE identification of npm's generated wrapper for OUR package.
+  //
+  // The previous test accepted any file containing "$basedir" and the word
+  // "hivemind", and this function DELETES what it matches. A user's own
+  // hivemind.ps1 that sets `$basedir = $PSScriptRoot` and calls hivemind.cmd
+  // satisfies both, so `hivemind update` would delete their script and whatever
+  // configuration it carried. A loose test in a delete path costs somebody a
+  // file; the strictness has to be in proportion to the consequence.
+  //
+  // cmd-shim emits both markers below verbatim: the $basedir preamble it
+  // generates, and an invocation naming this package's own path under
+  // node_modules. A hand-written helper matches neither.
   let content = "";
   try {
     content = readFileSync(ps1, "utf-8");
   } catch {
     return false;
   }
-  if (!content.includes("$basedir") || !content.includes("hivemind")) return false;
+  const CMD_SHIM_PREAMBLE = "$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent";
+  if (!content.includes(CMD_SHIM_PREAMBLE)) return false;
+  if (!content.includes("node_modules/@deeplake/hivemind") &&
+      !content.includes("node_modules\\@deeplake\\hivemind")) return false;
 
   try {
     unlinkSync(ps1);
@@ -345,7 +358,12 @@ export async function runUpdate(opts: UpdateOptions = {}): Promise<number> {
   // shim to remove. SessionStart dispatches `hivemind update` detached, so this
   // is also what repairs the shim routinely rather than only at upgrade time.
   const removeShim = opts.removeShim ?? removeNpmPowerShellShim;
-  removeShim();
+  // NOT under --dry-run. A preview that mutates the machine is worse than the
+  // bug the repair was added for: `hivemind update --dry-run` deleted a file
+  // while telling the user it was only describing what it would do. The repair
+  // is still unconditional on every real invocation, which is what keeps a user
+  // already on the latest version from staying broken.
+  if (!opts.dryRun) removeShim();
 
   const current = opts.currentVersionOverride ?? getVersion();
   const latest = opts.latestVersionOverride !== undefined
