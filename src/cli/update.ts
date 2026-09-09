@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { getVersion } from "./version.js";
 import { log, warn } from "./util.js";
 import { isNewer } from "../utils/version-check.js";
+import { binNeedsShell, resolveCliBin, shellFile } from "../utils/resolve-cli-bin.js";
 
 const NPM_REGISTRY_URL = "https://registry.npmjs.org/@deeplake/hivemind/latest";
 const PKG_NAME = "@deeplake/hivemind";
@@ -163,8 +164,83 @@ export interface UpdateOptions {
 }
 
 const defaultSpawn = (cmd: string, args: string[]): void => {
-  execFileSync(cmd, args, { stdio: "inherit" });
+  // `npm` and `hivemind` are bare names here, and on Windows both resolve to a
+  // `.cmd` shim. Since the CVE-2024-27980 fix (Node 18.20 / 20.12) a `.cmd`
+  // cannot be spawned without a shell, so this threw ENOENT for every Windows
+  // user and the update never ran. resolveCliBin does the `where` lookup and
+  // already prefers a directly-spawnable `.exe` over a `.cmd`; shellFile quotes
+  // the path, which is required under `shell: true` because Node joins file and
+  // args into one unescaped command string — and the default npm global bin
+  // contains a space on any account whose user name does.
+  const bin = resolveCliBin(cmd, cmd);
+  const needsShell = binNeedsShell(bin);
+  execFileSync(needsShell ? shellFile(bin) : bin, args, {
+    stdio: "inherit",
+    shell: needsShell,
+  });
 };
+
+/**
+ * Delete the `hivemind.ps1` npm generates beside `hivemind.cmd`.
+ *
+ * npm's cmd-shim writes three shims for every global bin — `hivemind`,
+ * `hivemind.cmd` and `hivemind.ps1`. At a PowerShell prompt the bare name
+ * resolves to the `.ps1`, and a `.ps1` is subject to the execution policy while
+ * a `.cmd` is not. Under `Restricted` or `AllSigned` every later `hivemind ...`
+ * the user types therefore dies with PSSecurityException, on a machine where the
+ * working `.cmd` is sitting right next to it.
+ *
+ * Deleting it needs no privileges and works on a Group-Policy-locked machine.
+ * The alternatives were rejected: overwriting it with a passthrough leaves a
+ * `.ps1`, which the policy still blocks, and Authenticode signing needs a
+ * certificate and a release pipeline that does not exist (and `AllSigned` still
+ * prompts on first run).
+ *
+ * This has to run after EVERY npm install, not once: cmd-shim removes and
+ * rewrites all three shims on every update, so the file comes back each time.
+ *
+ * Best-effort by contract. A shim we cannot delete is not a reason to fail an
+ * update that otherwise worked.
+ */
+export function removeNpmPowerShellShim(deps: {
+  platform?: string;
+  binDir?: string;
+} = {}): boolean {
+  const platform = deps.platform ?? process.platform;
+  if (platform !== "win32") return false;
+
+  // npm's own global bin directory, resolved through the shim npm itself
+  // installed rather than guessed from a path template.
+  let binDir = deps.binDir;
+  if (!binDir) {
+    const resolved = resolveCliBin("hivemind", "");
+    if (!resolved) return false;
+    binDir = dirname(resolved);
+  }
+
+  const ps1 = join(binDir, "hivemind.ps1");
+  const cmd = join(binDir, "hivemind.cmd");
+  if (!existsSync(ps1)) return false;
+  // Without the .cmd, deleting the .ps1 would remove the only way to run it.
+  if (!existsSync(cmd)) return false;
+
+  // Only the file we can positively identify as cmd-shim's generated wrapper.
+  // Never a glob, never a guessed path, never someone else's script.
+  let content = "";
+  try {
+    content = readFileSync(ps1, "utf-8");
+  } catch {
+    return false;
+  }
+  if (!content.includes("$basedir") || !content.includes("hivemind")) return false;
+
+  try {
+    unlinkSync(ps1);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Non-blocking O_EXCL pidfile lock around `npm install -g @deeplake/hivemind`.
@@ -302,6 +378,9 @@ export async function runUpdate(opts: UpdateOptions = {}): Promise<number> {
           // new (potentially malicious) publish lands between the version
           // check and the install.
           spawn("npm", ["install", "-g", `${PKG_NAME}@${latest}`]);
+          // npm has just rewritten the shims, so the .ps1 the execution policy
+          // blocks is back. Remove it again before the user's next command.
+          removeNpmPowerShellShim();
         } catch (e: any) {
           warn(`npm install failed: ${e.message}`);
           warn(`Try running it manually: npm install -g ${PKG_NAME}@${latest}`);

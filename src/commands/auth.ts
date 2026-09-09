@@ -105,6 +105,29 @@ export function hivemindReferrerHeader(ref?: string): Record<string, string> {
   return { "X-Hivemind-Referrer": code };
 }
 
+// Returns `{ "X-Hivemind-Lead": "<token>" }` for spreading into a headers
+// object, or `{}` when there is no token.
+//
+// The installer puts HIVEMIND_LEAD in this process's environment (never in argv
+// — the CLI reads argv[0] as its command name, so a stray flag would be an
+// unknown command). Carrying it onto the device flow is what joins an install to
+// the account it produced; without this hop the per-lead token joins ad click to
+// install and stops there.
+//
+// It is an opaque correlation id with NO authority. It travels in a command a
+// human pastes, so it lands in shell history and in the clipboard: nothing may
+// treat it as authentication, entitlement, or trial eligibility.
+//
+// The envelope matches the installer's and the beacon endpoint's. Validating
+// here too means a malformed value is dropped at the last hop rather than
+// arriving as a header nobody can join on.
+export function hivemindLeadHeader(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const token = env.HIVEMIND_LEAD?.trim();
+  if (!token) return {};
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(token)) return {};
+  return { "X-Hivemind-Lead": token };
+}
+
 // Tags the signup with the product entry point. The backend reads
 // X-Deeplake-Signup-Flow at user creation (first-write-wins) and persists it on
 // users.signup_flow, driving per-flow onboarding (the CLI signup plan step) and
@@ -122,6 +145,7 @@ export async function requestDeviceCode(apiUrl = DEFAULT_API_URL, ref?: string):
       ...hivemindOsHeader(),
       ...hivemindInstallIDHeader(),
       ...hivemindReferrerHeader(ref),
+      ...hivemindLeadHeader(),
       ...signupFlowHeader(),
     },
   });
