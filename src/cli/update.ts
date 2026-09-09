@@ -161,6 +161,8 @@ export interface UpdateOptions {
   spawn?: (cmd: string, args: string[]) => void;
   /** Override the lockfile path (tests). Default: `~/.deeplake/hivemind-update.lock`. */
   lockPathOverride?: string;
+  /** Inject the shim repair (tests). Default: the real removeNpmPowerShellShim. */
+  removeShim?: () => void;
 }
 
 const defaultSpawn = (cmd: string, args: string[]): void => {
@@ -332,6 +334,19 @@ function releaseLock(fd: number, path: string): void {
  *   1 — couldn't reach npm OR upgrade failed OR install kind unsupported
  */
 export async function runUpdate(opts: UpdateOptions = {}): Promise<number> {
+  // Repair the PowerShell shim on EVERY invocation, before anything can return
+  // early. This is not part of upgrading — it is repairing local state npm broke,
+  // and the two must not be coupled: a Windows user already on the latest version
+  // takes the "up to date" path below, and if the removal lived only after the
+  // npm install they would keep a `hivemind.ps1` the execution policy blocks,
+  // forever, with no version bump ever coming to fix it. CI caught exactly that.
+  //
+  // Cheap and idempotent: it returns immediately off Windows and when there is no
+  // shim to remove. SessionStart dispatches `hivemind update` detached, so this
+  // is also what repairs the shim routinely rather than only at upgrade time.
+  const removeShim = opts.removeShim ?? removeNpmPowerShellShim;
+  removeShim();
+
   const current = opts.currentVersionOverride ?? getVersion();
   const latest = opts.latestVersionOverride !== undefined
     ? opts.latestVersionOverride
@@ -378,9 +393,10 @@ export async function runUpdate(opts: UpdateOptions = {}): Promise<number> {
           // new (potentially malicious) publish lands between the version
           // check and the install.
           spawn("npm", ["install", "-g", `${PKG_NAME}@${latest}`]);
-          // npm has just rewritten the shims, so the .ps1 the execution policy
-          // blocks is back. Remove it again before the user's next command.
-          removeNpmPowerShellShim();
+          // Again after the install: cmd-shim removes and rewrites all three
+          // shims on every install, so the .ps1 the execution policy blocks is
+          // back. The call at the top of runUpdate cannot cover this one.
+          removeShim();
         } catch (e: any) {
           warn(`npm install failed: ${e.message}`);
           warn(`Try running it manually: npm install -g ${PKG_NAME}@${latest}`);

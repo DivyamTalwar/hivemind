@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { removeNpmPowerShellShim } from "../../src/cli/update.js";
+import { removeNpmPowerShellShim, runUpdate } from "../../src/cli/update.js";
 
 // npm's cmd-shim writes three shims for every global bin: `hivemind`,
 // `hivemind.cmd` and `hivemind.ps1`. At a PowerShell prompt the bare name
@@ -72,5 +72,36 @@ describe("removeNpmPowerShellShim", () => {
 
     expect(removeNpmPowerShellShim({ platform: "linux", binDir })).toBe(false);
     expect(existsSync(join(binDir, "hivemind.ps1"))).toBe(true);
+  });
+});
+
+// The regression CI caught, pinned here so it cannot come back.
+//
+// The removal used to live only after the `npm install -g` inside runUpdate. A
+// Windows user already on the latest version takes the "up to date" early return,
+// so that call never ran and they kept a `hivemind.ps1` the execution policy
+// blocks — permanently, because no version bump was ever coming to trigger it.
+// Repairing local state must not be coupled to whether an upgrade happened.
+describe("runUpdate repairs the shim before it can return early", () => {
+  it("removes the shim even when already on the latest version", async () => {
+    const binDir = mkdtempSync(join(tmpdir(), "hivemind-shim-update-"));
+    try {
+      writeFileSync(join(binDir, "hivemind.ps1"), GENERATED_PS1);
+      writeFileSync(join(binDir, "hivemind.cmd"), "@echo off\r\n");
+
+      // The "up to date" path: latest equals current, so runUpdate returns 0
+      // without ever reaching the npm install.
+      const code = await runUpdate({
+        currentVersionOverride: "9.9.9",
+        latestVersionOverride: "9.9.9",
+        removeShim: () => { removeNpmPowerShellShim({ platform: "win32", binDir }); },
+      });
+
+      expect(code).toBe(0);
+      expect(existsSync(join(binDir, "hivemind.ps1"))).toBe(false);
+      expect(existsSync(join(binDir, "hivemind.cmd"))).toBe(true);
+    } finally {
+      rmSync(binDir, { recursive: true, force: true });
+    }
   });
 });
