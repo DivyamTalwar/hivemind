@@ -461,12 +461,41 @@ describe("hivemind login / status", () => {
 
   it("'login --ref <code>' passes the affiliate code to ensureLoggedIn", async () => {
     await runCli(["login", "--ref", "mario"]);
-    expect(ensureLoggedInMock).toHaveBeenCalledWith("mario");
+    expect(ensureLoggedInMock).toHaveBeenCalledWith("mario", undefined);
   });
 
   it("'login --ref' does not swallow a following flag as the code", async () => {
     await runCli(["login", "--ref", "--skip-auth"]);
-    expect(ensureLoggedInMock).toHaveBeenCalledWith(undefined);
+    expect(ensureLoggedInMock).toHaveBeenCalledWith(undefined, undefined);
+  });
+
+  // The per-lead token (PLA-499) is read HERE, at the CLI edge, and threaded
+  // down. src/commands/auth.ts must never read it from the environment: that
+  // module is bundled into the OpenClaw distribution, where an env read beside a
+  // network send is flagged CRITICAL by the ClawHub static scan as credential
+  // harvesting. This pins the read at the edge where it belongs.
+  it("carries HIVEMIND_LEAD from the environment into ensureLoggedIn", async () => {
+    const prev = process.env.HIVEMIND_LEAD;
+    process.env.HIVEMIND_LEAD = "lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14";
+    try {
+      await runCli(["login"]);
+      expect(ensureLoggedInMock).toHaveBeenCalledWith(
+        undefined, "lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14");
+    } finally {
+      if (prev === undefined) delete process.env.HIVEMIND_LEAD;
+      else process.env.HIVEMIND_LEAD = prev;
+    }
+  });
+
+  it("passes no token for an ordinary login", async () => {
+    const prev = process.env.HIVEMIND_LEAD;
+    delete process.env.HIVEMIND_LEAD;
+    try {
+      await runCli(["login"]);
+      expect(ensureLoggedInMock).toHaveBeenCalledWith(undefined, undefined);
+    } finally {
+      if (prev !== undefined) process.env.HIVEMIND_LEAD = prev;
+    }
   });
 
   it("'status' prints version, login state, and detected platforms", async () => {

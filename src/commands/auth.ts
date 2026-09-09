@@ -108,11 +108,19 @@ export function hivemindReferrerHeader(ref?: string): Record<string, string> {
 // Returns `{ "X-Hivemind-Lead": "<token>" }` for spreading into a headers
 // object, or `{}` when there is no token.
 //
-// The installer puts HIVEMIND_LEAD in this process's environment (never in argv
-// — the CLI reads argv[0] as its command name, so a stray flag would be an
-// unknown command). Carrying it onto the device flow is what joins an install to
-// the account it produced; without this hop the per-lead token joins ad click to
+// The installer puts HIVEMIND_LEAD in the CLI's environment (never in argv — the
+// CLI reads argv[0] as its command name, so a stray flag would be an unknown
+// command). Carrying it onto the device flow is what joins an install to the
+// account it produced; without this hop the per-lead token joins ad click to
 // install and stops there.
+//
+// The token is READ at the CLI entry point and threaded down as an argument,
+// exactly as `ref` is. This module must not reach into process.env itself: it is
+// bundled into the OpenClaw distribution, and an environment read inside a file
+// that also sends network requests is what the ClawHub static scan calls
+// env-harvesting — correctly, since that is the shape credential exfiltration
+// takes. Keeping the read at the edge means the rule stays meaningful instead of
+// being suppressed.
 //
 // It is an opaque correlation id with NO authority. It travels in a command a
 // human pastes, so it lands in shell history and in the clipboard: nothing may
@@ -121,8 +129,8 @@ export function hivemindReferrerHeader(ref?: string): Record<string, string> {
 // The envelope matches the installer's and the beacon endpoint's. Validating
 // here too means a malformed value is dropped at the last hop rather than
 // arriving as a header nobody can join on.
-export function hivemindLeadHeader(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const token = env.HIVEMIND_LEAD?.trim();
+export function hivemindLeadHeader(lead?: string): Record<string, string> {
+  const token = lead?.trim();
   if (!token) return {};
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(token)) return {};
   return { "X-Hivemind-Lead": token };
@@ -136,7 +144,7 @@ export function signupFlowHeader(): Record<string, string> {
   return { "X-Deeplake-Signup-Flow": "hivemind" };
 }
 
-export async function requestDeviceCode(apiUrl = DEFAULT_API_URL, ref?: string): Promise<DeviceCodeResponse> {
+export async function requestDeviceCode(apiUrl = DEFAULT_API_URL, ref?: string, lead?: string): Promise<DeviceCodeResponse> {
   const resp = await fetch(`${apiUrl}/auth/device/code`, {
     method: "POST",
     headers: {
@@ -145,7 +153,7 @@ export async function requestDeviceCode(apiUrl = DEFAULT_API_URL, ref?: string):
       ...hivemindOsHeader(),
       ...hivemindInstallIDHeader(),
       ...hivemindReferrerHeader(ref),
-      ...hivemindLeadHeader(),
+      ...hivemindLeadHeader(lead),
       ...signupFlowHeader(),
     },
   });
@@ -197,8 +205,8 @@ function openBrowser(url: string): boolean {
   return openInBrowser(url).attempted;
 }
 
-export async function deviceFlowLogin(apiUrl = DEFAULT_API_URL, ref?: string): Promise<{ token: string; expiresIn: number }> {
-  const code = await requestDeviceCode(apiUrl, ref);
+export async function deviceFlowLogin(apiUrl = DEFAULT_API_URL, ref?: string, lead?: string): Promise<{ token: string; expiresIn: number }> {
+  const code = await requestDeviceCode(apiUrl, ref, lead);
 
   const opened = openBrowser(code.verification_uri_complete);
   const msg = [
@@ -476,7 +484,7 @@ export async function saveCredentialsFromToken(
   return creds;
 }
 
-export async function login(apiUrl = DEFAULT_API_URL, ref?: string): Promise<Credentials> {
-  const { token: authToken } = await deviceFlowLogin(apiUrl, ref);
+export async function login(apiUrl = DEFAULT_API_URL, ref?: string, lead?: string): Promise<Credentials> {
+  const { token: authToken } = await deviceFlowLogin(apiUrl, ref, lead);
   return saveCredentialsFromToken(authToken, apiUrl, { skipTokenMint: false });
 }
