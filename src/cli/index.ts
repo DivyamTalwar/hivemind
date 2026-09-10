@@ -223,20 +223,6 @@ function parseRef(args: string[]): string | undefined {
   return code.length > 0 ? code : undefined;
 }
 
-// The per-lead token the installer put in our environment (PLA-499). Read HERE,
-// at the CLI edge, and threaded down as an argument — src/commands/auth.ts is
-// bundled into the OpenClaw distribution, and an env read inside a module that
-// also sends network requests is exactly the shape the ClawHub static scan flags
-// as credential harvesting.
-//
-// No authority: it is an opaque correlation id that travelled in a pasted
-// command, so it is in shell history and the clipboard. It identifies which ad
-// lead an install came from and nothing else.
-function envLead(): string | undefined {
-  const raw = process.env.HIVEMIND_LEAD?.trim();
-  return raw ? raw : undefined;
-}
-
 function hasEnvToken(): boolean {
   return Boolean(process.env.HIVEMIND_TOKEN);
 }
@@ -327,7 +313,7 @@ async function runAuthGate(args: string[]): Promise<void> {
 
   let signedIn = false;
   if (yes) {
-    signedIn = await ensureLoggedIn(parseRef(args), envLead());
+    signedIn = await ensureLoggedIn(parseRef(args));
     if (!signedIn) {
       warn("Login did not complete.");
     }
@@ -524,7 +510,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (cmd === "login") { await ensureLoggedIn(parseRef(args.slice(1)), envLead()); return; }
+  if (cmd === "login") { await ensureLoggedIn(parseRef(args.slice(1))); return; }
   if (cmd === "status") { runStatus(); return; }
   if (cmd === "update") {
     const code = await runUpdate({ dryRun: hasFlag(args.slice(1), "--dry-run") });

@@ -105,37 +105,6 @@ export function hivemindReferrerHeader(ref?: string): Record<string, string> {
   return { "X-Hivemind-Referrer": code };
 }
 
-// Returns `{ "X-Hivemind-Lead": "<token>" }` for spreading into a headers
-// object, or `{}` when there is no token.
-//
-// The installer puts HIVEMIND_LEAD in the CLI's environment (never in argv — the
-// CLI reads argv[0] as its command name, so a stray flag would be an unknown
-// command). Carrying it onto the device flow is what joins an install to the
-// account it produced; without this hop the per-lead token joins ad click to
-// install and stops there.
-//
-// The token is READ at the CLI entry point and threaded down as an argument,
-// exactly as `ref` is. This module must not reach into process.env itself: it is
-// bundled into the OpenClaw distribution, and an environment read inside a file
-// that also sends network requests is what the ClawHub static scan calls
-// env-harvesting — correctly, since that is the shape credential exfiltration
-// takes. Keeping the read at the edge means the rule stays meaningful instead of
-// being suppressed.
-//
-// It is an opaque correlation id with NO authority. It travels in a command a
-// human pastes, so it lands in shell history and in the clipboard: nothing may
-// treat it as authentication, entitlement, or trial eligibility.
-//
-// The envelope matches the installer's and the beacon endpoint's. Validating
-// here too means a malformed value is dropped at the last hop rather than
-// arriving as a header nobody can join on.
-export function hivemindLeadHeader(lead?: string): Record<string, string> {
-  const token = lead?.trim();
-  if (!token) return {};
-  if (!/^[A-Za-z0-9_-]{8,64}$/.test(token)) return {};
-  return { "X-Hivemind-Lead": token };
-}
-
 // Tags the signup with the product entry point. The backend reads
 // X-Deeplake-Signup-Flow at user creation (first-write-wins) and persists it on
 // users.signup_flow, driving per-flow onboarding (the CLI signup plan step) and
@@ -144,7 +113,7 @@ export function signupFlowHeader(): Record<string, string> {
   return { "X-Deeplake-Signup-Flow": "hivemind" };
 }
 
-export async function requestDeviceCode(apiUrl = DEFAULT_API_URL, ref?: string, lead?: string): Promise<DeviceCodeResponse> {
+export async function requestDeviceCode(apiUrl = DEFAULT_API_URL, ref?: string): Promise<DeviceCodeResponse> {
   const resp = await fetch(`${apiUrl}/auth/device/code`, {
     method: "POST",
     headers: {
@@ -153,7 +122,6 @@ export async function requestDeviceCode(apiUrl = DEFAULT_API_URL, ref?: string, 
       ...hivemindOsHeader(),
       ...hivemindInstallIDHeader(),
       ...hivemindReferrerHeader(ref),
-      ...hivemindLeadHeader(lead),
       ...signupFlowHeader(),
     },
   });
@@ -205,8 +173,8 @@ function openBrowser(url: string): boolean {
   return openInBrowser(url).attempted;
 }
 
-export async function deviceFlowLogin(apiUrl = DEFAULT_API_URL, ref?: string, lead?: string): Promise<{ token: string; expiresIn: number }> {
-  const code = await requestDeviceCode(apiUrl, ref, lead);
+export async function deviceFlowLogin(apiUrl = DEFAULT_API_URL, ref?: string): Promise<{ token: string; expiresIn: number }> {
+  const code = await requestDeviceCode(apiUrl, ref);
 
   const opened = openBrowser(code.verification_uri_complete);
   const msg = [
@@ -484,7 +452,7 @@ export async function saveCredentialsFromToken(
   return creds;
 }
 
-export async function login(apiUrl = DEFAULT_API_URL, ref?: string, lead?: string): Promise<Credentials> {
-  const { token: authToken } = await deviceFlowLogin(apiUrl, ref, lead);
+export async function login(apiUrl = DEFAULT_API_URL, ref?: string): Promise<Credentials> {
+  const { token: authToken } = await deviceFlowLogin(apiUrl, ref);
   return saveCredentialsFromToken(authToken, apiUrl, { skipTokenMint: false });
 }

@@ -126,7 +126,7 @@ describe("ensureLoggedIn", () => {
     expect(await ensureLoggedIn()).toBe(true);
     expect(loginMock).toHaveBeenCalledTimes(1);
     // Second arg is the affiliate --ref code, undefined when none was passed.
-    expect(loginMock).toHaveBeenCalledWith("https://api.deeplake.ai", undefined, undefined);
+    expect(loginMock).toHaveBeenCalledWith("https://api.deeplake.ai", undefined);
   });
 
   it("HIVEMIND_API_URL is used when set, otherwise default", async () => {
@@ -136,7 +136,7 @@ describe("ensureLoggedIn", () => {
     });
     const { ensureLoggedIn } = await importFresh();
     await ensureLoggedIn();
-    expect(loginMock).toHaveBeenCalledWith("https://hm.example", undefined, undefined);
+    expect(loginMock).toHaveBeenCalledWith("https://hm.example", undefined);
   });
 
   it("DEEPLAKE_API_URL env is NOT honored (legacy name removed)", async () => {
@@ -146,7 +146,7 @@ describe("ensureLoggedIn", () => {
     });
     const { ensureLoggedIn } = await importFresh();
     await ensureLoggedIn();
-    expect(loginMock).toHaveBeenCalledWith("https://api.deeplake.ai", undefined, undefined);
+    expect(loginMock).toHaveBeenCalledWith("https://api.deeplake.ai", undefined);
   });
 
   it("threads the affiliate --ref code through to login()", async () => {
@@ -155,22 +155,7 @@ describe("ensureLoggedIn", () => {
     });
     const { ensureLoggedIn } = await importFresh();
     await ensureLoggedIn("mario");
-    expect(loginMock).toHaveBeenCalledWith("https://api.deeplake.ai", "mario", undefined);
-  });
-
-  // The per-lead token takes the same route as --ref: read at the CLI edge and
-  // threaded down as an argument. src/commands/auth.ts must never read it from
-  // the environment itself — that module is bundled into the OpenClaw
-  // distribution, where an env read beside a network send is flagged CRITICAL by
-  // the ClawHub static scan as credential harvesting.
-  it("threads the per-lead token through to login()", async () => {
-    loginMock.mockImplementation(async () => {
-      writeCreds({ token: "t", orgId: "o", savedAt: "" });
-    });
-    const { ensureLoggedIn } = await importFresh();
-    await ensureLoggedIn("mario", "lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14");
-    expect(loginMock).toHaveBeenCalledWith(
-      "https://api.deeplake.ai", "mario", "lv1_9f2c41ab7d3e40559c1b8ad6e2f70c14");
+    expect(loginMock).toHaveBeenCalledWith("https://api.deeplake.ai", "mario");
   });
 
   it("returns false (and writes to stderr) when login() rejects", async () => {
