@@ -54,6 +54,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { binNeedsShell, shellFile } from "../../utils/resolve-cli-bin.js";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import type { Credentials } from "../../commands/auth-creds.js";
@@ -125,17 +126,33 @@ export function isCodexManagedInstall(
  * blocking cost, and it's cheap).
  */
 const defaultSpawn = (cmd: string, args: string[]): { pid?: number } => {
-  const child = spawn(cmd, args, {
+  // On Windows the binary resolved by findHivemindOnPath is `hivemind.cmd`, and
+  // since the CVE-2024-27980 fix (Node 18.20 / 20.12) a `.cmd` is not a
+  // spawnable image: spawn ENOENTs, the 'error' listener below swallows it, and
+  // the update silently never happens. That is why Windows users were frozen on
+  // whatever version they first installed — nothing we ship reaches them.
+  //
+  // shellFile quotes the path, which matters for the default npm global bin of
+  // any Windows account with a space in its name
+  // (C:\Users\Jane Doe\AppData\Roaming\npm\hivemind.cmd): under `shell: true`
+  // Node concatenates file and args into one command string with no escaping.
+  const needsShell = binNeedsShell(cmd);
+  const child = spawn(needsShell ? shellFile(cmd) : cmd, args, {
     detached: true,
     stdio: "ignore",
     // SW_HIDE: libuv applies it alongside detached. No-op on POSIX.
     windowsHide: true,
+    shell: needsShell,
   });
   child.unref();
   // Swallow the unhandled 'error' event that fires synchronously when
   // the binary doesn't exist — without this listener it'd crash the
-  // parent process.
-  child.on("error", () => {});
+  // parent process. It stays swallowed by contract, but it is no longer
+  // silent: a failure here means updates have stopped, and the only way that
+  // was ever noticed was users reporting a months-old version.
+  child.on("error", (err) => {
+    log(`autoupdate spawn failed: ${(err as Error).message}`);
+  });
   return { pid: child.pid };
 };
 
