@@ -42,7 +42,7 @@ On [LoCoMo](https://arxiv.org/abs/2402.17753), the public long-context memory be
 
 - 📥 **Captures** every session's prompts, tool calls, and responses as structured traces in Deeplake
 - 🧠 **Codifies** patterns into reusable `SKILL.md` files, available to every agent on your team
-- 🔍 **Searches** traces and skills with hybrid lexical + semantic retrieval (BM25 fallback when embeddings off)
+- 🔍 **Searches** traces and skills with hybrid lexical + semantic retrieval (ILIKE lexical fallback when embeddings off)
 - 🔗 **Propagates** capability across sessions, agents, teammates, and machines in real time
 - 📁 **Intercepts** file operations on `~/.deeplake/memory/` through a virtual filesystem backed by SQL
 - 📝 **Summarizes** sessions into AI-generated wiki pages via a background worker at session end
@@ -435,7 +435,7 @@ So `org switch` moves everything that *isn't* explicitly pinned; a pin stays put
 
 ## Semantic search (optional)
 
-Hivemind ships with a local embedding daemon (nomic-embed-text-v1.5) for hybrid semantic + lexical search over `~/.deeplake/memory/`. **Off by default** because the dependency footprint is ~600 MB. Enable with `hivemind embeddings install` (or `hivemind install --with-embeddings`). Without it, search degrades silently to BM25/lexical-only.
+Hivemind ships with a local embedding daemon (nomic-embed-text-v1.5) for hybrid semantic + lexical search over `~/.deeplake/memory/`. **Off by default** because the dependency footprint is ~600 MB. Enable with `hivemind embeddings install` (or `hivemind install --with-embeddings`). Without it, search degrades silently to ILIKE lexical-only.
 
 Full guide: **[docs/EMBEDDINGS.md](docs/EMBEDDINGS.md)**.
 
