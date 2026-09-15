@@ -137,15 +137,17 @@ export function resolveDirConfig(
   if (!found) return { config: base, collect: true, found: null };
 
   const orgLocked = !!(envOverride ? envOverride.HIVEMIND_ORG_ID : process.env.HIVEMIND_ORG_ID);
-  const wsLocked = !!(envOverride ? envOverride.HIVEMIND_WORKSPACE_ID : process.env.HIVEMIND_WORKSPACE_ID);
+  const envWs = envOverride ? envOverride.HIVEMIND_WORKSPACE_ID : process.env.HIVEMIND_WORKSPACE_ID;
   const orgId = orgLocked ? base.orgId : (found.raw.orgId ?? base.orgId);
+  // Always resolve the RAW reference against the final org: `base.workspaceId`
+  // was already mapped by loadConfig() against the login org, which is the
+  // wrong map once this file routes the org elsewhere.
+  const wsRef = envWs || found.raw.workspaceId || base.workspaceId;
   const config: Config = {
     ...base,
     orgId,
     orgName: orgLocked ? base.orgName : (found.raw.orgName ?? found.raw.orgId ?? base.orgName),
-    workspaceId: wsLocked
-      ? base.workspaceId
-      : resolveWorkspaceRef(base.workspaceAliases, orgId, found.raw.workspaceId ?? base.workspaceId),
+    workspaceId: resolveWorkspaceRef(base.workspaceAliases, orgId, wsRef),
   };
   return { config, collect: found.raw.collect !== false, found };
 }
