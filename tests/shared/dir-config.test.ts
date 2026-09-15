@@ -171,6 +171,13 @@ describe("resolveDirConfig — env precedence (env > .hivemind)", () => {
     expect(res.config.workspaceId).toBe("env-ws"); // .hivemind workspace ignored
   });
 
+  it("a .hivemind workspace NAME resolves through the alias map of the routed org", () => {
+    write(dir("proj"), ".hivemind", { orgId: "acme", workspaceId: "Client Work" });
+    const withAliases = { ...base(), workspaceAliases: { acme: { "client work": "client-work" }, "global-org": { "client work": "wrong" } } };
+    const res = resolveDirConfig(withAliases, dir("proj"), {});
+    expect(res.config.workspaceId).toBe("client-work");
+  });
+
   it("both env vars set → .hivemind routing is fully ignored", () => {
     write(dir("proj"), ".hivemind", { orgId: "acme", workspaceId: "client-work" });
     const pinned = { ...base(), orgId: "env-org", orgName: "env-org", workspaceId: "env-ws" };

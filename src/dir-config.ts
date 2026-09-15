@@ -30,6 +30,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { loadConfig, type Config } from "./config.js";
+import { resolveWorkspaceRef } from "./commands/auth-creds.js";
 
 /** Committed (shared) and local (personal, gitignored) filenames, local first. */
 export const DIR_CONFIG_FILENAMES = [".hivemind.local", ".hivemind"] as const;
@@ -137,11 +138,14 @@ export function resolveDirConfig(
 
   const orgLocked = !!(envOverride ? envOverride.HIVEMIND_ORG_ID : process.env.HIVEMIND_ORG_ID);
   const wsLocked = !!(envOverride ? envOverride.HIVEMIND_WORKSPACE_ID : process.env.HIVEMIND_WORKSPACE_ID);
+  const orgId = orgLocked ? base.orgId : (found.raw.orgId ?? base.orgId);
   const config: Config = {
     ...base,
-    orgId: orgLocked ? base.orgId : (found.raw.orgId ?? base.orgId),
+    orgId,
     orgName: orgLocked ? base.orgName : (found.raw.orgName ?? found.raw.orgId ?? base.orgName),
-    workspaceId: wsLocked ? base.workspaceId : (found.raw.workspaceId ?? base.workspaceId),
+    workspaceId: wsLocked
+      ? base.workspaceId
+      : resolveWorkspaceRef(base.workspaceAliases, orgId, found.raw.workspaceId ?? base.workspaceId),
   };
   return { config, collect: found.raw.collect !== false, found };
 }
