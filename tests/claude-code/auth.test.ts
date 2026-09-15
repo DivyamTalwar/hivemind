@@ -961,3 +961,77 @@ describe("API helper error path", () => {
     await expect(removeMember("u1", "tok", "o1", "https://api.example")).rejects.toThrow(/404/);
   });
 });
+
+describe("resolveWorkspaceOverride", () => {
+  const creds = { token: "t", orgId: "org-1", apiUrl: "https://api.example", savedAt: "x" } as any;
+  const wsList = [{ id: "default", name: "default" }, { id: "model-services-dev", name: "Model Services Dev" }];
+
+  afterEach(() => {
+    delete process.env.HIVEMIND_WORKSPACE_ID;
+    delete process.env.HIVEMIND_ORG_ID;
+  });
+
+  it("is a no-op without the env var or with the 'default' sentinel", async () => {
+    const { resolveWorkspaceOverride } = await importAuth();
+    expect(await resolveWorkspaceOverride(creds)).toEqual({ creds });
+    process.env.HIVEMIND_WORKSPACE_ID = "default";
+    expect(await resolveWorkspaceOverride(creds)).toEqual({ creds });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(saveCredentialsMock).not.toHaveBeenCalled();
+  });
+
+  it("learns a name → id alias with ONE /workspaces GET and persists it", async () => {
+    process.env.HIVEMIND_WORKSPACE_ID = "Model Services Dev";
+    fetchMock.mockResolvedValueOnce(ok({ data: wsList }));
+    const { resolveWorkspaceOverride } = await importAuth();
+    const out = await resolveWorkspaceOverride(creds);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://api.example/workspaces");
+    expect(init.headers["X-Activeloop-Org-Id"]).toBe("org-1");
+    expect(out.warning).toBeUndefined();
+    expect(out.creds.workspaceAliases).toEqual({ "org-1": { "model services dev": "model-services-dev" } });
+    expect(saveCredentialsMock).toHaveBeenCalledTimes(1);
+    expect(saveCredentialsMock.mock.calls[0][0].workspaceAliases).toEqual(out.creds.workspaceAliases);
+  });
+
+  it("skips the network once the alias is cached", async () => {
+    process.env.HIVEMIND_WORKSPACE_ID = "Model Services Dev";
+    const cached = { ...creds, workspaceAliases: { "org-1": { "model services dev": "model-services-dev" } } };
+    const { resolveWorkspaceOverride } = await importAuth();
+    expect(await resolveWorkspaceOverride(cached)).toEqual({ creds: cached });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves against HIVEMIND_ORG_ID when that override is set too", async () => {
+    process.env.HIVEMIND_WORKSPACE_ID = "model-services-dev";
+    process.env.HIVEMIND_ORG_ID = "org-2";
+    fetchMock.mockResolvedValueOnce(ok(wsList));
+    const { resolveWorkspaceOverride } = await importAuth();
+    const out = await resolveWorkspaceOverride(creds);
+    expect(fetchMock.mock.calls[0][1].headers["X-Activeloop-Org-Id"]).toBe("org-2");
+    expect(out.creds.workspaceAliases).toEqual({ "org-2": { "model-services-dev": "model-services-dev" } });
+  });
+
+  it("warns (and persists nothing) when the workspace is not in the org", async () => {
+    process.env.HIVEMIND_WORKSPACE_ID = "Nope";
+    fetchMock.mockResolvedValueOnce(ok({ data: wsList }));
+    const { resolveWorkspaceOverride } = await importAuth();
+    const out = await resolveWorkspaceOverride(creds);
+    expect(out.creds).toBe(creds);
+    expect(out.warning).toContain("HIVEMIND_WORKSPACE_ID='Nope'");
+    expect(out.warning).toContain("Model Services Dev");
+    expect(out.warning).toContain("hivemind workspace switch");
+    expect(saveCredentialsMock).not.toHaveBeenCalled();
+  });
+
+  it("swallows API failures: no warning, no write", async () => {
+    process.env.HIVEMIND_WORKSPACE_ID = "Model Services Dev";
+    fetchMock.mockResolvedValueOnce(new Response("boom", { status: 500 }));
+    const { resolveWorkspaceOverride } = await importAuth();
+    const out = await resolveWorkspaceOverride(creds);
+    expect(out).toEqual({ creds });
+    expect(saveCredentialsMock).not.toHaveBeenCalled();
+  });
+});

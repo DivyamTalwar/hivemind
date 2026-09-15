@@ -301,8 +301,7 @@ export async function healDriftedOrgToken(
     if (currentWs !== "default") {
       try {
         const wsList = await listWorkspaces(healed.token, apiUrl, creds.orgId);
-        const lcWs = currentWs.toLowerCase();
-        const wsMatch = wsList.find(w => w.id === currentWs || (w.name && w.name.toLowerCase() === lcWs));
+        const wsMatch = findWorkspace(wsList, currentWs);
         if (!wsMatch) {
           log(`workspace '${currentWs}' not in org ${creds.orgId} — reset to default`);
           healed.workspaceId = "default";
@@ -325,6 +324,58 @@ export async function healDriftedOrgToken(
 }
 
 // ── Workspace Commands ───────────────────────────────────────────────────────
+
+export function findWorkspace(
+  wsList: { id: string; name: string }[],
+  ref: string,
+): { id: string; name: string } | undefined {
+  const lc = ref.toLowerCase();
+  return wsList.find(w => w.id === ref || (w.name && w.name.toLowerCase() === lc));
+}
+
+export interface WorkspaceOverrideResult {
+  creds: Credentials;
+  // User-facing line when the override names a workspace the org doesn't
+  // have. Every write would 403 and capture would silently switch itself
+  // off, so SessionStart must say it out loud.
+  warning?: string;
+}
+
+// `HIVEMIND_WORKSPACE_ID` is documented as a workspace NAME but the API only
+// accepts ids in `/workspaces/{id}/...` — a name gets a 403 on every query.
+// Resolve the override once per session against the effective org and cache
+// the answer in creds.workspaceAliases so every later (synchronous) hook maps
+// it through loadConfig() without a round-trip. Never throws.
+export async function resolveWorkspaceOverride(
+  creds: Credentials,
+  log: (msg: string) => void = () => {},
+): Promise<WorkspaceOverrideResult> {
+  const ref = process.env.HIVEMIND_WORKSPACE_ID;
+  if (!ref || ref === "default" || !creds.token) return { creds };
+  const orgId = process.env.HIVEMIND_ORG_ID ?? creds.orgId;
+  if (creds.workspaceAliases?.[orgId]?.[ref.toLowerCase()]) return { creds };
+  try {
+    const wsList = await listWorkspaces(creds.token, creds.apiUrl ?? DEFAULT_API_URL, orgId);
+    const match = findWorkspace(wsList, ref);
+    if (!match) {
+      const names = wsList.map(w => w.name || w.id).join(", ") || "(none)";
+      log(`HIVEMIND_WORKSPACE_ID='${ref}' not found in org ${orgId}`);
+      return {
+        creds,
+        warning: `HIVEMIND_WORKSPACE_ID='${ref}' does not match any workspace in this org (available: ${names}); ` +
+          `capture and memory search will fail until it is fixed. Prefer \`hivemind workspace switch <name>\` over the env var.`,
+      };
+    }
+    const aliases = { ...creds.workspaceAliases, [orgId]: { ...creds.workspaceAliases?.[orgId], [ref.toLowerCase()]: match.id } };
+    const updated: Credentials = { ...creds, workspaceAliases: aliases };
+    saveCredentials(updated);
+    if (match.id !== ref) log(`HIVEMIND_WORKSPACE_ID='${ref}' resolved to id '${match.id}'`);
+    return { creds: updated };
+  } catch (e) {
+    log(`workspace override resolve skipped: ${(e as Error).message}`);
+    return { creds };
+  }
+}
 
 export async function listWorkspaces(token: string, apiUrl = DEFAULT_API_URL, orgId?: string): Promise<{ id: string; name: string }[]> {
   const raw = await apiGet("/workspaces", token, apiUrl, orgId) as { data?: { id: string; name: string }[] } | { id: string; name: string }[];
