@@ -349,6 +349,14 @@ export interface WorkspaceOverrideResult {
 // keeps working when the request is cut off.
 const WORKSPACE_LOOKUP_TIMEOUT_MS = 5_000;
 
+// The warning below lands in the model's context. A `.hivemind` is committed
+// content from a cloned repo and workspace names come from the API, so
+// neither may carry newlines, control characters, or unbounded text into it.
+export function sanitizeForContext(value: string, max = 64): string {
+  const flat = value.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
 // `HIVEMIND_WORKSPACE_ID` (and a `.hivemind` workspaceId) are documented as
 // workspace NAMES but the API only accepts ids in `/workspaces/{id}/...` — a
 // name gets a 403 on every query. Resolve the reference against the EFFECTIVE
@@ -373,12 +381,12 @@ export async function resolveWorkspaceOverride(
     const wsList = await listWorkspaces(token, apiUrl, orgId, AbortSignal.timeout(WORKSPACE_LOOKUP_TIMEOUT_MS));
     const match = findWorkspace(wsList, ref);
     if (!match) {
-      const names = wsList.map(w => w.name || w.id).join(", ") || "(none)";
-      const source = process.env.HIVEMIND_WORKSPACE_ID ? "HIVEMIND_WORKSPACE_ID" : found?.path;
-      log(`workspace '${ref}' not found in org ${orgId}`);
+      const names = wsList.map(w => sanitizeForContext(w.name || w.id)).join(", ") || "(none)";
+      const source = process.env.HIVEMIND_WORKSPACE_ID ? "HIVEMIND_WORKSPACE_ID" : "the nearest .hivemind file";
+      log(`workspace '${ref}' not found in org ${orgId} (from ${source}${found ? `: ${found.path}` : ""})`);
       return {
         creds: cached ? forgetWorkspaceAlias(creds, orgId, ref) : creds,
-        warning: `Workspace '${ref}' (from ${source}) does not match any workspace in this org (available: ${names}); ` +
+        warning: `Workspace '${sanitizeForContext(ref)}' (from ${source}) does not match any workspace in this org (available: ${names}); ` +
           `capture and memory search will fail until it is fixed. Prefer \`hivemind workspace switch <name>\` over the env var.`,
       };
     }
