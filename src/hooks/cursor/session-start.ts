@@ -137,7 +137,7 @@ async function main(): Promise<void> {
     log(`credentials loaded: org=${creds.orgName ?? creds.orgId}`);
     creds = await healDriftedOrgToken(creds, log);
     // Must run before loadConfig() below so the learned alias is on disk.
-    const wsOverride = await resolveWorkspaceOverride(creds, log);
+    const wsOverride = await resolveWorkspaceOverride(creds, log, cwd);
     creds = wsOverride.creds;
     workspaceWarning = wsOverride.warning ? `\n${wsOverride.warning}` : "";
   }

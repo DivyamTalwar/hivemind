@@ -160,7 +160,7 @@ async function main(): Promise<void> {
     // failure (logged + continue with stale token).
     creds = await healDriftedOrgToken(creds, log);
     // Must run before loadConfig() below so the learned alias is on disk.
-    const wsOverride = await resolveWorkspaceOverride(creds, log);
+    const wsOverride = await resolveWorkspaceOverride(creds, log, input.cwd ?? process.cwd());
     creds = wsOverride.creds;
     workspaceWarning = wsOverride.warning ? `\n\n${wsOverride.warning}` : "";
     // Backfill userName if missing (for users who logged in before this field was added)

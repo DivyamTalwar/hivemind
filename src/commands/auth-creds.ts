@@ -45,14 +45,27 @@ export interface Credentials {
   savedAt: string;
 }
 
-// "default" is the per-org sentinel the backend resolves itself.
+// "default" is the per-org sentinel the backend resolves itself. Own-property
+// lookups only: the map is user-controlled JSON, and `__proto__` /
+// `constructor` must not read as cache hits.
+export function lookupWorkspaceAlias(
+  aliases: Record<string, Record<string, string>> | undefined,
+  orgId: string,
+  ref: string,
+): string | undefined {
+  const org = aliases && Object.prototype.hasOwnProperty.call(aliases, orgId) ? aliases[orgId] : undefined;
+  const key = ref.toLowerCase();
+  const id = org && Object.prototype.hasOwnProperty.call(org, key) ? org[key] : undefined;
+  return typeof id === "string" ? id : undefined;
+}
+
 export function resolveWorkspaceRef(
   aliases: Record<string, Record<string, string>> | undefined,
   orgId: string,
   ref: string,
 ): string {
   if (ref === "default") return ref;
-  return aliases?.[orgId]?.[ref.toLowerCase()] ?? ref;
+  return lookupWorkspaceAlias(aliases, orgId, ref) ?? ref;
 }
 
 // Each helper avoids the existsSync-before-act anti-pattern: it has both a

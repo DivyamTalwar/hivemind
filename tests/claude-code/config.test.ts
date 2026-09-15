@@ -233,6 +233,14 @@ describe("loadConfig — workspace alias resolution", () => {
     expect(loadConfig()?.workspaceId).toBe("Model Services Dev");
   });
 
+  it("ignores inherited properties in the alias map", async () => {
+    existsSyncMock.mockReturnValue(true);
+    readFileSyncMock.mockReturnValue(JSON.stringify({ token: "ftok", orgId: "forg", workspaceAliases: { forg: { a: "b" } } }));
+    process.env.HIVEMIND_WORKSPACE_ID = "constructor";
+    const loadConfig = await importLoadConfig();
+    expect(loadConfig()?.workspaceId).toBe("constructor");
+  });
+
   it("never rewrites the 'default' sentinel and exposes the alias map", async () => {
     existsSyncMock.mockReturnValue(true);
     readFileSyncMock.mockReturnValue(JSON.stringify({
