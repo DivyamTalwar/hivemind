@@ -39,7 +39,7 @@ export interface Credentials {
   // Per-org map of a workspace reference the user typed (name or id, lower-
   // cased) to the backend id, learned by resolveWorkspaceOverride() at
   // SessionStart. Lets the synchronous loadConfig() in every later hook turn
-  // `HIVEMIND_WORKSPACE_ID="Model Services Dev"` into `model-services-dev`
+  // `HIVEMIND_WORKSPACE_ID="Data Platform Dev"` into `data-platform-dev`
   // without a network call — the API only accepts ids in its URLs.
   workspaceAliases?: Record<string, Record<string, string>>;
   savedAt: string;

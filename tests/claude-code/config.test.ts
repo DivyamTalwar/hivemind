@@ -207,15 +207,15 @@ describe("loadConfig — workspace alias resolution", () => {
     existsSyncMock.mockReturnValue(true);
     readFileSyncMock.mockReturnValue(JSON.stringify({
       token: "ftok", orgId: "forg", workspaceId: "default",
-      workspaceAliases: { forg: { "model services dev": "model-services-dev" }, other: { "x": "y" } },
+      workspaceAliases: { forg: { "data platform dev": "data-platform-dev" }, other: { "x": "y" } },
     }));
   }
 
   it("maps an env workspace NAME through the learned alias, case-insensitively", async () => {
     credsWithAliases();
-    process.env.HIVEMIND_WORKSPACE_ID = "Model Services Dev";
+    process.env.HIVEMIND_WORKSPACE_ID = "Data Platform Dev";
     const loadConfig = await importLoadConfig();
-    expect(loadConfig()?.workspaceId).toBe("model-services-dev");
+    expect(loadConfig()?.workspaceId).toBe("data-platform-dev");
   });
 
   it("passes an unknown env value through unchanged (SessionStart warns instead)", async () => {
@@ -228,9 +228,9 @@ describe("loadConfig — workspace alias resolution", () => {
   it("only consults aliases of the effective org", async () => {
     credsWithAliases();
     process.env.HIVEMIND_ORG_ID = "other";
-    process.env.HIVEMIND_WORKSPACE_ID = "Model Services Dev";
+    process.env.HIVEMIND_WORKSPACE_ID = "Data Platform Dev";
     const loadConfig = await importLoadConfig();
-    expect(loadConfig()?.workspaceId).toBe("Model Services Dev");
+    expect(loadConfig()?.workspaceId).toBe("Data Platform Dev");
   });
 
   it("ignores inherited properties in the alias map", async () => {

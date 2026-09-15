@@ -979,7 +979,7 @@ describe("findWorkspace", () => {
 
 describe("resolveWorkspaceOverride", () => {
   const creds = { token: "t", orgId: "org-1", apiUrl: "https://api.example", savedAt: "x" } as any;
-  const wsList = [{ id: "default", name: "default" }, { id: "model-services-dev", name: "Model Services Dev" }];
+  const wsList = [{ id: "default", name: "default" }, { id: "data-platform-dev", name: "Data Platform Dev" }];
   let cwd: string;
 
   beforeEach(() => {
@@ -1005,7 +1005,7 @@ describe("resolveWorkspaceOverride", () => {
   });
 
   it("learns a name → id alias with ONE bounded /workspaces GET and persists it", async () => {
-    process.env.HIVEMIND_WORKSPACE_ID = "Model Services Dev";
+    process.env.HIVEMIND_WORKSPACE_ID = "Data Platform Dev";
     fetchMock.mockResolvedValueOnce(ok({ data: wsList }));
     const { resolveWorkspaceOverride } = await importAuth();
     const out = await resolveWorkspaceOverride(creds, undefined, cwd);
@@ -1016,13 +1016,13 @@ describe("resolveWorkspaceOverride", () => {
     expect(init.headers["X-Activeloop-Org-Id"]).toBe("org-1");
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(out.warning).toBeUndefined();
-    expect(out.creds.workspaceAliases).toEqual({ "org-1": { "model services dev": "model-services-dev" } });
+    expect(out.creds.workspaceAliases).toEqual({ "org-1": { "data platform dev": "data-platform-dev" } });
     expect(saveCredentialsMock).toHaveBeenCalledTimes(1);
     expect(saveCredentialsMock.mock.calls[0][0].workspaceAliases).toEqual(out.creds.workspaceAliases);
   });
 
   it("merges the alias into the credentials ON DISK, never over a concurrent heal", async () => {
-    process.env.HIVEMIND_WORKSPACE_ID = "Model Services Dev";
+    process.env.HIVEMIND_WORKSPACE_ID = "Data Platform Dev";
     fetchMock.mockResolvedValueOnce(ok({ data: wsList }));
     // Another session healed the token after this one loaded its snapshot.
     loadCredentialsMock.mockReturnValue({ ...creds, token: "healed-tok", workspaceAliases: { "org-9": { x: "y" } } });
@@ -1030,15 +1030,15 @@ describe("resolveWorkspaceOverride", () => {
     const out = await resolveWorkspaceOverride(creds, undefined, cwd);
     const written = saveCredentialsMock.mock.calls[0][0];
     expect(written.token).toBe("healed-tok");
-    expect(written.workspaceAliases).toEqual({ "org-9": { x: "y" }, "org-1": { "model services dev": "model-services-dev" } });
+    expect(written.workspaceAliases).toEqual({ "org-9": { x: "y" }, "org-1": { "data platform dev": "data-platform-dev" } });
     // In-memory creds keep their own token; only the alias map is added.
     expect(out.creds.token).toBe("t");
   });
 
   it("re-validates a cached alias every session and skips the write when unchanged", async () => {
-    process.env.HIVEMIND_WORKSPACE_ID = "Model Services Dev";
+    process.env.HIVEMIND_WORKSPACE_ID = "Data Platform Dev";
     fetchMock.mockResolvedValueOnce(ok({ data: wsList }));
-    const cached = { ...creds, workspaceAliases: { "org-1": { "model services dev": "model-services-dev" } } };
+    const cached = { ...creds, workspaceAliases: { "org-1": { "data platform dev": "data-platform-dev" } } };
     const { resolveWorkspaceOverride } = await importAuth();
     expect(await resolveWorkspaceOverride(cached, undefined, cwd)).toEqual({ creds: cached });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -1046,38 +1046,38 @@ describe("resolveWorkspaceOverride", () => {
   });
 
   it("drops a stale alias when the workspace no longer exists, and warns", async () => {
-    process.env.HIVEMIND_WORKSPACE_ID = "Model Services Dev";
+    process.env.HIVEMIND_WORKSPACE_ID = "Data Platform Dev";
     fetchMock.mockResolvedValueOnce(ok({ data: [{ id: "default", name: "default" }] }));
-    const cached = { ...creds, workspaceAliases: { "org-1": { "model services dev": "model-services-dev", keep: "keep" } } };
+    const cached = { ...creds, workspaceAliases: { "org-1": { "data platform dev": "data-platform-dev", keep: "keep" } } };
     loadCredentialsMock.mockReturnValue(cached);
     const { resolveWorkspaceOverride } = await importAuth();
     const out = await resolveWorkspaceOverride(cached, undefined, cwd);
-    expect(out.warning).toContain("Workspace 'Model Services Dev' (from HIVEMIND_WORKSPACE_ID)");
+    expect(out.warning).toContain("Workspace 'Data Platform Dev' (from HIVEMIND_WORKSPACE_ID)");
     expect(saveCredentialsMock).toHaveBeenCalledTimes(1);
     expect(saveCredentialsMock.mock.calls[0][0].workspaceAliases).toEqual({ "org-1": { keep: "keep" } });
   });
 
   it("resolves a .hivemind workspace name against the org that file routes to", async () => {
-    writeFileSync(join(cwd, ".hivemind"), JSON.stringify({ orgId: "org-2", workspaceId: "Model Services Dev" }));
+    writeFileSync(join(cwd, ".hivemind"), JSON.stringify({ orgId: "org-2", workspaceId: "Data Platform Dev" }));
     fetchMock.mockResolvedValueOnce(ok(wsList));
     const { resolveWorkspaceOverride } = await importAuth();
     const out = await resolveWorkspaceOverride(creds, undefined, cwd);
     expect(fetchMock.mock.calls[0][1].headers["X-Activeloop-Org-Id"]).toBe("org-2");
-    expect(out.creds.workspaceAliases).toEqual({ "org-2": { "model services dev": "model-services-dev" } });
+    expect(out.creds.workspaceAliases).toEqual({ "org-2": { "data platform dev": "data-platform-dev" } });
   });
 
   it("env workspace lock + .hivemind org route → resolves the env value against the ROUTED org", async () => {
     writeFileSync(join(cwd, ".hivemind"), JSON.stringify({ orgId: "org-2", workspaceId: "other" }));
-    process.env.HIVEMIND_WORKSPACE_ID = "Model Services Dev";
+    process.env.HIVEMIND_WORKSPACE_ID = "Data Platform Dev";
     fetchMock.mockResolvedValueOnce(ok(wsList));
     const { resolveWorkspaceOverride } = await importAuth();
     const out = await resolveWorkspaceOverride(creds, undefined, cwd);
     expect(fetchMock.mock.calls[0][1].headers["X-Activeloop-Org-Id"]).toBe("org-2");
-    expect(out.creds.workspaceAliases).toEqual({ "org-2": { "model services dev": "model-services-dev" } });
+    expect(out.creds.workspaceAliases).toEqual({ "org-2": { "data platform dev": "data-platform-dev" } });
   });
 
   it("honours HIVEMIND_ORG_ID / HIVEMIND_TOKEN / HIVEMIND_API_URL like loadConfig does", async () => {
-    process.env.HIVEMIND_WORKSPACE_ID = "model-services-dev";
+    process.env.HIVEMIND_WORKSPACE_ID = "data-platform-dev";
     process.env.HIVEMIND_ORG_ID = "org-3";
     process.env.HIVEMIND_TOKEN = "env-tok";
     process.env.HIVEMIND_API_URL = "https://staging.example";
@@ -1088,7 +1088,7 @@ describe("resolveWorkspaceOverride", () => {
     expect(url).toBe("https://staging.example/workspaces");
     expect(init.headers.Authorization).toBe("Bearer env-tok");
     expect(init.headers["X-Activeloop-Org-Id"]).toBe("org-3");
-    expect(out.creds.workspaceAliases).toEqual({ "org-3": { "model-services-dev": "model-services-dev" } });
+    expect(out.creds.workspaceAliases).toEqual({ "org-3": { "data-platform-dev": "data-platform-dev" } });
   });
 
   it("warns (and persists nothing) when the workspace is not in the org", async () => {
@@ -1098,7 +1098,7 @@ describe("resolveWorkspaceOverride", () => {
     const out = await resolveWorkspaceOverride(creds, undefined, cwd);
     expect(out.creds).toBe(creds);
     expect(out.warning).toContain("Workspace 'Nope' (from HIVEMIND_WORKSPACE_ID)");
-    expect(out.warning).toContain("Model Services Dev");
+    expect(out.warning).toContain("Data Platform Dev");
     expect(out.warning).toContain("hivemind workspace switch");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(saveCredentialsMock).not.toHaveBeenCalled();
@@ -1119,9 +1119,9 @@ describe("resolveWorkspaceOverride", () => {
   });
 
   it("swallows API failures and keeps the cached alias: no warning, no write", async () => {
-    process.env.HIVEMIND_WORKSPACE_ID = "Model Services Dev";
+    process.env.HIVEMIND_WORKSPACE_ID = "Data Platform Dev";
     fetchMock.mockResolvedValueOnce(new Response("boom", { status: 500 }));
-    const cached = { ...creds, workspaceAliases: { "org-1": { "model services dev": "model-services-dev" } } };
+    const cached = { ...creds, workspaceAliases: { "org-1": { "data platform dev": "data-platform-dev" } } };
     const { resolveWorkspaceOverride } = await importAuth();
     const out = await resolveWorkspaceOverride(cached, undefined, cwd);
     expect(out).toEqual({ creds: cached });
