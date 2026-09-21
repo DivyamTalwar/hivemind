@@ -15,7 +15,7 @@
  * entry once it no longer matches HEAD.
  */
 
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, chmodSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -63,13 +63,21 @@ function readMap(file: string): Record<string, PrivateDoc> {
 }
 
 function writeMap(file: string, map: Record<string, PrivateDoc>): void {
-  mkdirSync(dirname(file), { recursive: true });
-  // Per-process tmp name so concurrent writers don't clobber a shared `.tmp`
-  // before rename. (Same-(project,scope) refreshes are already serialized by
-  // the refresh lease; this guards cross-process / cross-scope overlap.)
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(map, null, 1) + "\n");
-  renameSync(tmp, file); // atomic replace
+  const root = dirname(file);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  // mkdir's mode does not affect an existing directory. Restrict stores
+  // created by older versions too, without changing the parent directory.
+  chmodSync(root, 0o700);
+  // A private, exclusive staging directory avoids following a pre-existing
+  // predictable .tmp file. The replacement stays on the same filesystem.
+  const staging = mkdtempSync(join(root, ".private-doc-"));
+  const tmp = join(staging, "store.json");
+  try {
+    writeFileSync(tmp, JSON.stringify(map, null, 1) + "\n", { mode: 0o600, flag: "wx" });
+    renameSync(tmp, file); // atomic replace; the final file retains mode 0600
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
 }
 
 /** The private doc for (project, scope, doc_id), or null. */
