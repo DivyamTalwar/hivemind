@@ -226,3 +226,55 @@ describe("cowork queue growth when uploads fail", () => {
     // Each tick re-reads a 256 MB queue file, so this is slower than the rest.
   }, 60_000);
 });
+
+
+describe("unterminated Cowork records", () => {
+  it("retries a partial first record after the writer completes it", async () => {
+    const path = transcriptPath();
+    const complete = line("split across writes");
+    const split = complete.indexOf("split across") + 5;
+    writeFileSync(path, complete.slice(0, split));
+    const { ingestCoworkSessions } = await import("../../src/mcp/cowork-ingest.js");
+    expect(await ingestCoworkSessions()).toEqual({ ingested: 0 });
+    expect(queuedRows()).toBe(0);
+    appendFileSync(path, complete.slice(split));
+    expect(await ingestCoworkSessions()).toEqual({ ingested: 1 });
+    expect(queuedRows()).toBe(1);
+    expect(await ingestCoworkSessions()).toEqual({ ingested: 0 });
+    expect(queuedRows()).toBe(1);
+  });
+
+  it("keeps completed progress without consuming a partial final record", async () => {
+    const path = transcriptPath();
+    const second = line("second prompt");
+    const split = second.indexOf("second prompt") + 6;
+    writeFileSync(path, line("first prompt") + second.slice(0, split));
+    const { ingestCoworkSessions } = await import("../../src/mcp/cowork-ingest.js");
+    expect(await ingestCoworkSessions()).toEqual({ ingested: 1 });
+    expect(await ingestCoworkSessions()).toEqual({ ingested: 0 });
+    const statePath = join(home, ".deeplake", "cowork-ingest-state.json");
+    expect(JSON.parse(readFileSync(statePath, "utf-8")).processedLines[path]).toBe(1);
+    appendFileSync(path, second.slice(split) + line("third prompt"));
+    expect(await ingestCoworkSessions()).toEqual({ ingested: 2 });
+    expect(queuedRows()).toBe(3);
+  });
+
+  it("still ingests a complete JSON record without a final newline", async () => {
+    const path = transcriptPath();
+    writeFileSync(path, line("complete at EOF").trimEnd());
+    const { ingestCoworkSessions } = await import("../../src/mcp/cowork-ingest.js");
+    expect(await ingestCoworkSessions()).toEqual({ ingested: 1 });
+    appendFileSync(path, "\n" + line("next record"));
+    expect(await ingestCoworkSessions()).toEqual({ ingested: 1 });
+    expect(queuedRows()).toBe(2);
+  });
+
+  it("skips newline-terminated malformed JSON instead of stalling later rows", async () => {
+    const path = transcriptPath();
+    writeFileSync(path, '{"broken":\n' + line("after malformed line"));
+    const { ingestCoworkSessions } = await import("../../src/mcp/cowork-ingest.js");
+    expect(await ingestCoworkSessions()).toEqual({ ingested: 1 });
+    expect(queuedRows()).toBe(1);
+    expect(await ingestCoworkSessions()).toEqual({ ingested: 0 });
+  });
+});
