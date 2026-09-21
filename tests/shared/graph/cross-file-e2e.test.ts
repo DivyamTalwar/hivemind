@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { extractTypeScript } from "../../../src/graph/extract/typescript.js";
+import { extractJavaScript } from "../../../src/graph/extract/javascript.js";
 import { buildSnapshot } from "../../../src/graph/snapshot.js";
 import type { GraphMetadata, GraphObservation } from "../../../src/graph/types.js";
 
@@ -37,6 +38,22 @@ describe("cross-file calls — extractor → snapshot", () => {
     const snap = buildSnapshot([a, b], meta(), obs());
     const cross = callsEdges(snap).find(
       (e) => e.source === "src/a.ts:run:function" && e.target === "src/b.ts:greet:function",
+    );
+    expect(cross).toBeDefined();
+  });
+
+  it("named import: JavaScript caller → exported function in another JavaScript file", () => {
+    const a = extractJavaScript(
+      `import { greet } from "./b.js";\nexport function run() { return greet(); }\n`,
+      "src/a.js",
+    );
+    const b = extractJavaScript(
+      `export function greet() { return 1; }\n`,
+      "src/b.js",
+    );
+    const snap = buildSnapshot([a, b], meta(), obs());
+    const cross = callsEdges(snap).find(
+      (e) => e.source === "src/a.js:run:function" && e.target === "src/b.js:greet:function",
     );
     expect(cross).toBeDefined();
   });

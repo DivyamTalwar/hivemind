@@ -6,7 +6,7 @@
  */
 
 import JavaScript from "tree-sitter-javascript";
-import type { FileExtraction, GraphNode } from "../types.js";
+import type { FileExtraction, GraphNode, RawCall } from "../types.js";
 import {
   collectParseErrors,
   firstOfType,
@@ -36,6 +36,8 @@ export function extractJavaScript(
     nodes: [],
     edges: [],
     parse_errors: [],
+    raw_calls: [],
+    import_bindings: [],
   };
   collectParseErrors(root, relativePath, result.parse_errors);
 
@@ -173,6 +175,7 @@ function collectImports(
           relation: "imports",
           confidence: "EXTRACTED",
         });
+        extractImportBindings(node, spec, result);
       }
     }
     return;
@@ -206,6 +209,40 @@ function collectImports(
   for (let i = 0; i < node.namedChildCount; i++) {
     const child = node.namedChild(i);
     if (child !== null) collectImports(child, relativePath, result, moduleNode);
+  }
+}
+
+/** Record the runtime bindings a cross-file call resolver needs. */
+function extractImportBindings(
+  importStmt: TSNode,
+  specifier: string,
+  result: FileExtraction,
+): void {
+  const clause = firstOfType(importStmt, ["import_clause"]);
+  if (clause === null) return; // side-effect-only import
+
+  const push = (local_name: string, imported_name: string, kind: "named" | "default" | "namespace") => {
+    result.import_bindings!.push({ local_name, imported_name, kind, specifier });
+  };
+
+  for (let i = 0; i < clause.namedChildCount; i++) {
+    const child = clause.namedChild(i);
+    if (child === null) continue;
+    if (child.type === "identifier") {
+      push(child.text, "default", "default");
+    } else if (child.type === "namespace_import") {
+      const id = firstOfType(child, ["identifier"]);
+      if (id !== null) push(id.text, "*", "namespace");
+    } else if (child.type === "named_imports") {
+      for (let j = 0; j < child.namedChildCount; j++) {
+        const spec = child.namedChild(j);
+        if (spec === null || spec.type !== "import_specifier") continue;
+        const name = spec.childForFieldName("name");
+        if (name === null) continue;
+        const alias = spec.childForFieldName("alias");
+        push(alias?.text ?? name.text, name.text, "named");
+      }
+    }
   }
 }
 
@@ -262,6 +299,18 @@ function collectCalls(
               confidence: "EXTRACTED",
             });
           }
+        } else {
+          const caller = findEnclosingFn(node, declByName);
+          if (caller !== null) {
+            const raw = rawCallFromCallee(callee, caller.id);
+            if (raw !== null) result.raw_calls!.push(raw);
+          }
+        }
+      } else {
+        const caller = findEnclosingFn(node, declByName);
+        if (caller !== null) {
+          const raw = rawCallFromCallee(callee, caller.id);
+          if (raw !== null) result.raw_calls!.push(raw);
         }
       }
     }
@@ -270,6 +319,21 @@ function collectCalls(
     const child = node.namedChild(i);
     if (child !== null) collectCalls(child, relativePath, result, declByName);
   }
+}
+
+/** Capture the simple call shapes supported by the cross-file resolver. */
+function rawCallFromCallee(callee: TSNode, callerId: string): RawCall | null {
+  if (callee.type === "identifier") {
+    return { caller_id: callerId, callee_name: callee.text };
+  }
+  if (callee.type === "member_expression") {
+    const object = callee.childForFieldName("object");
+    const property = callee.childForFieldName("property");
+    if (object?.type === "identifier" && property?.type === "property_identifier") {
+      return { caller_id: callerId, callee_name: property.text, receiver: object.text };
+    }
+  }
+  return null;
 }
 
 function findEnclosingFn(
