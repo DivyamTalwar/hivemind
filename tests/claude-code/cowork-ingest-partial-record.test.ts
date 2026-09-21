@@ -116,7 +116,8 @@ describe("Cowork ingest partial transcript records", () => {
     // line was skipped; the unterminated tail remains in the real queue state.
     expect(uploads).toHaveLength(1);
     expect(uploads[0]).toContain('"content":"first"');
-    expect(readFileSync(join(home, ".deeplake", "cowork-ingest-state.json"), "utf8")).toContain('"processedLines"');
+    const state = JSON.parse(readFileSync(join(home, ".deeplake", "cowork-ingest-state.json"), "utf8"));
+    expect(state.processedLines[path]).toBe(2);
     expect(readFileSync(path, "utf8")).not.toContain("split record");
 
     appendFileSync(path, Buffer.from(partial, "utf8").subarray(splitAt));
