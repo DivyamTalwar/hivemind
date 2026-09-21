@@ -1,9 +1,15 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const writeFileSyncMock = vi.hoisted(() => vi.fn());
+const randomUUIDMock = vi.hoisted(() => vi.fn(() => "fixed-test-uuid"));
+
+vi.mock("node:crypto", async () => {
+  const actual = await vi.importActual<typeof import("node:crypto")>("node:crypto");
+  return { ...actual, randomUUID: randomUUIDMock };
+});
 
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
@@ -42,6 +48,7 @@ describe("writeLocalManifest publication", () => {
     const path = manifestPath("failure");
     const original = manifest(1);
     writeLocalManifest(original, path);
+    const originalBytes = readFileSync(path);
 
     const realWriteFileSync = writeFileSyncMock.getMockImplementation()!;
     writeFileSyncMock.mockImplementation((file: unknown, data: unknown, options: unknown) => {
@@ -59,6 +66,55 @@ describe("writeLocalManifest publication", () => {
     }
 
     expect(readLocalManifest(path)).toEqual(original);
+    expect(readFileSync(path)).toEqual(originalBytes);
     expect(readdirSync(tmpDir).filter(name => name.startsWith("failure.json."))).toEqual([]);
+  });
+
+  it("preserves a restrictive mode while replacing the manifest", () => {
+    const path = manifestPath("mode");
+    writeLocalManifest(manifest(1), path);
+    chmodSync(path, 0o600);
+
+    writeLocalManifest(manifest(2), path);
+
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(readLocalManifest(path)?.entries).toHaveLength(2);
+  });
+
+  it("does not alter an existing parent directory mode", () => {
+    const parent = join(tmpDir, "parent-mode");
+    const path = join(parent, "manifest.json");
+    const originalMode = 0o750;
+    // The parent is deliberately created before the manifest write; the
+    // writer must not chmod it as part of preserving the file mode.
+    mkdirSync(parent);
+    chmodSync(parent, originalMode);
+    writeLocalManifest(manifest(1), path);
+
+    if (process.platform !== "win32") expect(statSync(parent).mode & 0o777).toBe(originalMode);
+    expect(readLocalManifest(path)?.entries).toHaveLength(1);
+  });
+
+  it("does not follow a pre-created staging symlink", () => {
+    const path = manifestPath("symlink");
+    const target = join(tmpDir, "symlink-target");
+    const tmp = `${path}.${process.pid}.fixed-test-uuid.tmp`;
+    const originalTarget = "must remain untouched";
+    writeFileSync(target, originalTarget);
+    symlinkSync(target, tmp);
+
+    expect(() => writeLocalManifest(manifest(1), path)).toThrow();
+    expect(readFileSync(target, "utf8")).toBe(originalTarget);
+    expect(lstatSync(tmp).isSymbolicLink()).toBe(true);
+    expect(readLocalManifest(path)).toBeNull();
+  });
+
+  it("creates a fresh manifest and cleans up its staging file", () => {
+    const path = manifestPath("fresh");
+
+    writeLocalManifest(manifest(1), path);
+
+    expect(readLocalManifest(path)?.entries).toHaveLength(1);
+    expect(readdirSync(tmpDir).filter(name => name.startsWith("fresh.json."))).toEqual([]);
   });
 });

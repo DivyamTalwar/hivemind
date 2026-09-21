@@ -19,7 +19,7 @@
  * imports the gate runner, parallelMap, etc. — heavy for a hook).
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -88,11 +88,25 @@ export function readLocalManifest(path: string = LOCAL_MANIFEST_PATH): LocalMani
 export function writeLocalManifest(m: LocalManifest, path: string = LOCAL_MANIFEST_PATH): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  let mode = 0o666;
   try {
-    writeFileSync(tmp, JSON.stringify(m, null, 2));
+    // The rename replaces the destination, so carry its permission bits to
+    // the staged file. Use lstat so a destination symlink is not followed.
+    mode = lstatSync(path).mode & 0o7777;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+  try {
+    // O_EXCL prevents a pre-created temp symlink from redirecting the write.
+    writeFileSync(tmp, JSON.stringify(m, null, 2), { encoding: "utf8", mode, flag: "wx" });
     renameSync(tmp, path);
   } catch (e) {
-    try { unlinkSync(tmp); } catch { /* best effort cleanup */ }
+    // An EEXIST means the exclusive create never owned this path; leave a
+    // pre-existing collision alone. Other failures may leave our partial
+    // stage behind, so remove it on a best-effort basis.
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") {
+      try { unlinkSync(tmp); } catch { /* best effort cleanup */ }
+    }
     throw e;
   }
 }
