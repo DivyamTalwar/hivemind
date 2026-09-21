@@ -1,0 +1,72 @@
+name: Campaign isolated contribution gates
+on:
+  push:
+    branches: [audit/campaign-gates-20260922]
+permissions:
+  contents: read
+jobs:
+  validation:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - label: cowork-partial-transcript-record
+            ref: 655e40559e6d1822f4a8a1342050bb8ea7424755
+          - label: query-semaphore-abort
+            ref: 265c4dd6fbafeeb72df77125e856a01045a6fc41
+          - label: cowork-summary-after-upload
+            ref: 48fc1d4699f9722978895217981e670f32fb5f98
+          - label: graph-docs-project-scope
+            ref: 560e92c213db9614d15015c4479da5c75779d994
+          - label: graph-docs-pull-context
+            ref: b2058002594a6fffc8b5f455bc5dcf33c35af735
+          - label: graph-javascript-cross-file-calls
+            ref: c4147d607b5a58bc765e1237c64532719290ccd4
+          - label: graph-pull-preserve-sidecarless
+            ref: 8eef5347d63d0ce1d89f0206d33e24a81cd393dd
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+      - name: Install exact lockfile dependencies
+        env:
+          HUSKY: '0'
+        run: |
+          mkdir -p /tmp/campaign-gate
+          npm ci > /tmp/campaign-gate/install.log 2>&1 || { tail -100 /tmp/campaign-gate/install.log; exit 1; }
+      - name: Typecheck build duplication and bundle audit
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD | tee /tmp/campaign-gate/commit.txt
+          git diff ce30de7ca94115cb73fa991538c6d2595ac2622a...HEAD --check
+          npm run typecheck > /tmp/campaign-gate/typecheck.log 2>&1 || { cat /tmp/campaign-gate/typecheck.log; exit 1; }
+          npm run build > /tmp/campaign-gate/build.log 2>&1 || { tail -100 /tmp/campaign-gate/build.log; exit 1; }
+          npm run dup > /tmp/campaign-gate/duplication.log 2>&1 || { tail -100 /tmp/campaign-gate/duplication.log; exit 1; }
+          npm run audit:openclaw -- --criticals-only > /tmp/campaign-gate/bundle-audit.log 2>&1 || { cat /tmp/campaign-gate/bundle-audit.log; exit 1; }
+      - name: Full repository tests with coverage
+        run: |
+          npx vitest run --coverage --maxWorkers=2 --reporter=default --reporter=json --outputFile=/tmp/campaign-gate/tests.json > /tmp/campaign-gate/tests.log 2>&1 || { tail -150 /tmp/campaign-gate/tests.log; exit 1; }
+          python3 - <<'PYCODE'
+          import json
+          r=json.load(open('/tmp/campaign-gate/tests.json'))
+          print({k:r[k] for k in ['numTotalTests','numPassedTests','numFailedTests','numPendingTests','success']})
+          assert r['success'] is True
+          assert r['numFailedTests']==0
+          assert r['numPendingTests']==0
+          assert r['numPassedTests']>=5849
+          PYCODE
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: campaign-${{ matrix.label }}
+          path: /tmp/campaign-gate/
+          retention-days: 7
