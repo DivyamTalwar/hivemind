@@ -168,9 +168,30 @@ function hasQueuedRows(): boolean {
     // never rows owed to the backend.
     return readdirSync(COWORK_QUEUE_DIR)
       .some(n => !n.startsWith(".") && (n.endsWith(".jsonl") || n.endsWith(".inflight")));
-  } catch {
-    return false; // no queue dir yet
+  } catch (e: unknown) {
+    // A missing queue directory means there is nothing to drain. Any other
+    // filesystem failure is unknown queue state: force the drain attempt and
+    // let the summary gate fail closed instead of claiming upload succeeded.
+    return (e as { code?: string }).code !== "ENOENT";
   }
+}
+
+/** True only when this session has actionable queued bytes or an unsafe FS state. */
+function hasPendingSessionQueue(sessionId: string): boolean {
+  for (const suffix of [".jsonl", ".inflight"] as const) {
+    try {
+      const info = statSync(join(COWORK_QUEUE_DIR, `${sessionId}${suffix}`));
+      // Queue markers are expected to be regular files. An unexpected path
+      // type is safer to treat as pending than to summarize against uncertain
+      // backend state.
+      if (!info.isFile() || info.size > 0) return true;
+    } catch (e: unknown) {
+      // ENOENT means this marker is absent. Permission, ENOTDIR, and all other
+      // errors leave the upload state unknown, so summaries must wait.
+      if ((e as { code?: string }).code !== "ENOENT") return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -393,10 +414,7 @@ export function summarizeIdleSessions(
     // Both workers read cloud rows, so defer this session until its durable
     // queue has drained. Leave summarizedLines unchanged so a later idle tick
     // retries even when the transcript itself has received no new content.
-    if (
-      existsSync(join(COWORK_QUEUE_DIR, `${sessionId}.jsonl`)) ||
-      existsSync(join(COWORK_QUEUE_DIR, `${sessionId}.inflight`))
-    ) continue;
+    if (hasPendingSessionQueue(sessionId)) continue;
     try {
       doSpawn(sessionId);
       state.summarizedLines[path] = processed;
