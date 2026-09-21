@@ -85,10 +85,18 @@ if sys.argv[1] == 'test-only':
 elif sys.argv[1] == 'fix':
     text = SOURCE.read_text()
     old = '  appendFileSync(queuePath, inflight);'
-    new = '''  // A producer may have left an unterminated record in the new queue.
-  // Separate recovered rows so that tail cannot consume the first inflight
-  // row. Blank lines are ignored by readQueuedRows.
-  appendFileSync(queuePath, `\\n${inflight}`);'''
+    new = '''  // An interrupted producer can leave an unterminated tail in the new
+  // queue. Inspect and append through the same descriptor, as the normal
+  // append path does, so recovered rows stay separate from that fragment.
+  // Do not add a separator to empty or terminated files: repeated failures
+  // must leave their byte size unchanged (including queues at the ceiling).
+  const fd = openSync(queuePath, "a+");
+  try {
+    const separator = endsWithNewline(fd, fstatSync(fd).size) ? "" : "\\n";
+    appendFileSync(fd, separator + inflight);
+  } finally {
+    closeSync(fd);
+  }'''
     assert text.count(old) == 1
     SOURCE.write_text(text.replace(old, new))
 else:
