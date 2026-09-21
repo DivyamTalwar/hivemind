@@ -52,7 +52,11 @@ export function loadCurrentSnapshotDetails(
   // before turning it into a path under the graph snapshot directory.
   if (!/^[A-Za-z0-9._-]+$/.test(fileBase)) return null;
   const snapPath = join(baseDir, "snapshots", `${fileBase}.json`);
-  if (!existsSync(snapPath) || !lstatSync(snapPath).isFile()) return null;
+  try {
+    if (!existsSync(snapPath) || !lstatSync(snapPath).isFile()) return null;
+  } catch {
+    return null;
+  }
   try {
     const snap = JSON.parse(readFileSync(snapPath, "utf8")) as GraphSnapshot;
     if (!Array.isArray(snap.nodes) || !Array.isArray(snap.links)) return null;

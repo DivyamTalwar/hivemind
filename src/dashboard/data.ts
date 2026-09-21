@@ -205,9 +205,11 @@ function resolveLegacySnapshot(repoDir: string, repoKey: string): DashboardGraph
     try {
       const sha = readFileSync(pointer, "utf-8").trim();
       if (sha && /^[A-Za-z0-9._-]+$/.test(sha)) {
-        pointedCommit = sha;
         const candidate = join(snapshotsDir, `${sha}.json`);
-        if (existsSync(candidate) && lstatSync(candidate).isFile()) snapshotPath = candidate;
+        if (existsSync(candidate) && lstatSync(candidate).isFile()) {
+          pointedCommit = sha;
+          snapshotPath = candidate;
+        }
         else log(`latest-commit.txt points at missing ${sha}.json — scanning snapshots/`);
       } else if (sha) {
         log("latest-commit.txt contains an unsafe snapshot name — scanning snapshots/");
