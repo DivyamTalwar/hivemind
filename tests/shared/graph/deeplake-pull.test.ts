@@ -246,10 +246,19 @@ describe("pullSnapshot — outcome resolution", () => {
 
   it("local ts > cloud ts → local-newer (NO overwrite)", async () => {
     mkdirSync(baseDir, { recursive: true });
+    const localSnapshot: GraphSnapshot = {
+      ...FIXTURE_SNAPSHOT,
+      graph: { ...FIXTURE_SNAPSHOT.graph, repo_key: deriveProjectKey(tmpCwd).key },
+      observation: { ...FIXTURE_SNAPSHOT.observation, ts: "2026-06-03T00:00:00.000Z" },
+      nodes: [{ ...FIXTURE_SNAPSHOT.nodes[0]!, label: "local" }],
+    };
+    const snapshotPath = join(baseDir, "snapshots", "head1234abcd.json");
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(snapshotPath, canonicalSnapshot(localSnapshot));
     writeLastBuild(baseDir, {
       ts: 2_000_000_000_000,  // year 2033 in epoch ms
       commit_sha: "head1234abcd",
-      snapshot_sha256: "different-local-sha",
+      snapshot_sha256: computeSnapshotSha256(localSnapshot),
       node_count: 1,
       edge_count: 0,
     });
@@ -276,8 +285,8 @@ describe("pullSnapshot — outcome resolution", () => {
       expect(result.localTs).toBe(2_000_000_000_000);
       expect(result.cloudTs).toBeLessThan(result.localTs);
     }
-    // No file written
-    expect(existsSync(join(baseDir, "snapshots", "head1234abcd.json"))).toBe(false);
+    // No snapshot content was overwritten.
+    expect(readFileSync(snapshotPath, "utf8")).toBe(canonicalSnapshot(localSnapshot));
   });
 
   it("local missing → pulls (creates snapshot file + sidecars + history entry)", async () => {
@@ -331,12 +340,117 @@ describe("pullSnapshot — outcome resolution", () => {
   it("preserves a valid newer same-HEAD snapshot when its sidecar is missing", async () => {
     const localSnapshot: GraphSnapshot = {
       ...FIXTURE_SNAPSHOT,
+      graph: { ...FIXTURE_SNAPSHOT.graph, repo_key: deriveProjectKey(tmpCwd).key },
       observation: { ...FIXTURE_SNAPSHOT.observation, ts: "2026-06-03T00:00:00.000Z" },
       nodes: [{ ...FIXTURE_SNAPSHOT.nodes[0]!, label: "local" }],
     };
     const snapshotPath = join(baseDir, "snapshots", "head1234abcd.json");
     mkdirSync(join(baseDir, "snapshots"), { recursive: true });
     writeFileSync(snapshotPath, canonicalSnapshot(localSnapshot));
+
+    const { api } = makeMockApi({
+      selectReturns: [{
+        snapshot_jsonb: CLOUD_PAYLOAD,
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
+        ts: "2026-06-02T00:00:00.000Z",
+        node_count: 1, edge_count: 0,
+        worktree_id: "remote-wt",
+      }],
+    });
+    const result = await pullSnapshot(tmpCwd, {
+      loadConfig: makeConfig,
+      readHead: () => "head1234abcd",
+      makeApi: () => api,
+    });
+
+    expect(result.kind).toBe("local-newer");
+    expect(readFileSync(snapshotPath, "utf8")).toBe(canonicalSnapshot(localSnapshot));
+  });
+
+  it("repairs a same-HEAD snapshot with foreign embedded identity instead of trusting its future observation", async () => {
+    const foreignSnapshot = {
+      ...FIXTURE_SNAPSHOT,
+      graph: {
+        ...FIXTURE_SNAPSHOT.graph,
+        schema_version: 999,
+        generator: "other-generator",
+        repo_key: "WRONG-REPO",
+      },
+      observation: {
+        ...FIXTURE_SNAPSHOT.observation,
+        ts: "2099-06-03T00:00:00.000Z",
+      },
+    } as unknown as GraphSnapshot;
+    const snapshotPath = join(baseDir, "snapshots", "head1234abcd.json");
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(snapshotPath, canonicalSnapshot(foreignSnapshot));
+
+    const { api } = makeMockApi({
+      selectReturns: [{
+        snapshot_jsonb: CLOUD_PAYLOAD,
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
+        ts: "2026-06-02T00:00:00.000Z",
+        node_count: 1, edge_count: 0,
+        worktree_id: "remote-wt",
+      }],
+    });
+    const result = await pullSnapshot(tmpCwd, {
+      loadConfig: makeConfig,
+      readHead: () => "head1234abcd",
+      makeApi: () => api,
+    });
+
+    expect(result.kind).toBe("pulled");
+    expect(readFileSync(snapshotPath, "utf8")).toBe(CLOUD_PAYLOAD);
+  });
+
+  it("does not use a future observation as freshness evidence even with current stable identity", async () => {
+    const futureSnapshot: GraphSnapshot = {
+      ...FIXTURE_SNAPSHOT,
+      graph: { ...FIXTURE_SNAPSHOT.graph, repo_key: deriveProjectKey(tmpCwd).key },
+      observation: { ...FIXTURE_SNAPSHOT.observation, ts: "2099-06-03T00:00:00.000Z" },
+      nodes: [{ ...FIXTURE_SNAPSHOT.nodes[0]!, label: "future-local" }],
+    };
+    const snapshotPath = join(baseDir, "snapshots", "head1234abcd.json");
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(snapshotPath, canonicalSnapshot(futureSnapshot));
+
+    const { api } = makeMockApi({
+      selectReturns: [{
+        snapshot_jsonb: CLOUD_PAYLOAD,
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
+        ts: "2026-06-02T00:00:00.000Z",
+        node_count: 1, edge_count: 0,
+        worktree_id: "remote-wt",
+      }],
+    });
+    const result = await pullSnapshot(tmpCwd, {
+      loadConfig: makeConfig,
+      readHead: () => "head1234abcd",
+      makeApi: () => api,
+    });
+
+    expect(result.kind).toBe("pulled");
+    expect(readFileSync(snapshotPath, "utf8")).toBe(CLOUD_PAYLOAD);
+  });
+
+  it("reconciles a stale inconsistent sidecar before comparing a newer local snapshot", async () => {
+    const localSnapshot: GraphSnapshot = {
+      ...FIXTURE_SNAPSHOT,
+      graph: { ...FIXTURE_SNAPSHOT.graph, repo_key: deriveProjectKey(tmpCwd).key },
+      observation: { ...FIXTURE_SNAPSHOT.observation, ts: "2026-06-03T00:00:00.000Z" },
+      nodes: [{ ...FIXTURE_SNAPSHOT.nodes[0]!, label: "local" }],
+    };
+    const snapshotPath = join(baseDir, "snapshots", "head1234abcd.json");
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(snapshotPath, canonicalSnapshot(localSnapshot));
+    writeLastBuild(baseDir, {
+      ts: Date.parse("2026-06-01T00:00:00.000Z"),
+      commit_sha: "head1234abcd",
+      snapshot_sha256: CLOUD_PAYLOAD_SHA,
+      node_count: 1,
+      edge_count: 0,
+    }, worktreeIdFromCwd(tmpCwd));
 
     const { api } = makeMockApi({
       selectReturns: [{
