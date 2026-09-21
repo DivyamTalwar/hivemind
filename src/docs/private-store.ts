@@ -73,7 +73,11 @@ function writeMap(file: string, map: Record<string, PrivateDoc>): void {
   const staging = mkdtempSync(join(root, ".private-doc-"));
   const tmp = join(staging, "store.json");
   try {
+    // Creation modes are filtered by umask; retain owner access even when
+    // a caller masks owner permissions, without exposing contents to others.
+    chmodSync(staging, 0o700);
     writeFileSync(tmp, JSON.stringify(map, null, 1) + "\n", { mode: 0o600, flag: "wx" });
+    chmodSync(tmp, 0o600);
     renameSync(tmp, file); // atomic replace; the final file retains mode 0600
   } finally {
     rmSync(staging, { recursive: true, force: true });

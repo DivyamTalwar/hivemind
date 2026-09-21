@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writePrivateDoc, readPrivateDoc, deletePrivateDoc, type PrivateDoc } from "../../src/docs/private-store.js";
@@ -23,6 +23,15 @@ describe.skipIf(process.platform === "win32")("private doc store filesystem perm
   afterEach(() => {
     process.umask(oldUmask);
     vi.unstubAllEnvs();
+    // A negative-control run may leave a staging directory without owner
+    // permissions. Recover only this test's private fixture before cleanup.
+    if (existsSync(root)) {
+      chmodSync(root, 0o700);
+      for (const name of readdirSync(root)) {
+        const entry = join(root, name);
+        if (statSync(entry).isDirectory()) chmodSync(entry, 0o700);
+      }
+    }
     rmSync(parent, { recursive: true, force: true });
   });
 
@@ -39,6 +48,15 @@ describe.skipIf(process.platform === "win32")("private doc store filesystem perm
     expect(statSync(storePath()).mode & 0o777).toBe(0o600);
     expect(statSync(parent).mode & 0o777).toBe(0o755);
     expect(readPrivateDoc("project", "b:private", doc.doc_id)).toEqual(doc);
+  });
+
+  it.each([0o200, 0o400, 0o777])("retains owner access with restrictive umask %o", (mask) => {
+    process.umask(mask);
+    writePrivateDoc("project", "b:private", doc);
+    expect(statSync(root).mode & 0o777).toBe(0o700);
+    expect(statSync(storePath()).mode & 0o777).toBe(0o600);
+    expect(readPrivateDoc("project", "b:private", doc.doc_id)).toEqual(doc);
+    expect(readdirSync(root).filter((name) => name.startsWith(".private-doc-"))).toEqual([]);
   });
 
   it("tightens a legacy store on replacement and retains permissions on deletion", () => {
