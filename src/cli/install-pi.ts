@@ -1,6 +1,17 @@
-import { existsSync, writeFileSync, rmSync, readFileSync, copyFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { HOME, pkgRoot, ensureDir, syncDir, reportPruned, writeVersionStamp, log, isLink, warn } from "./util.js";
+import { HOME, pkgRoot, ensureDir, syncDir, reportPruned, writeVersionStamp, log, warn } from "./util.js";
 import { getVersion } from "./version.js";
 import {
   upsertMarkedBlock,
@@ -38,7 +49,14 @@ const LEGACY_SKILL_DIR = join(PI_AGENT_DIR, "skills", "hivemind-memory");
 const EXTENSIONS_DIR = join(PI_AGENT_DIR, "extensions");
 const EXTENSION_PATH = join(EXTENSIONS_DIR, "hivemind.ts");
 const VERSION_DIR = join(PI_AGENT_DIR, ".hivemind");
-const LEGACY_SKILL_PRESERVED = join(VERSION_DIR, ".legacy_skill_preserved");
+const LEGACY_SKILL_PATH = join(LEGACY_SKILL_DIR, "SKILL.md");
+// Exact SHA-256 digests of the two SKILL.md bodies the historical Pi
+// installer shipped (3b7d8a01 and 5ba761c0). The Pi-wide version stamp is
+// not provenance for this particular path.
+const LEGACY_SKILL_DIGESTS = new Set([
+  "124e4881db8e8c7e78073c69fb7cde6969990792f20f436ee13eb6ef54fa8282",
+  "a3b8ffe6769096ff2cfc3d89049e66cd948de80ba2b2f0ba57da268ec6b3b5c2",
+]);
 // Worker bundles the extension spawns (wiki-worker shells `pi --print` for
 // the AI summary; skillify / autopull / skillopt / notifications workers are
 // the shared modules pi cannot import as raw .ts). CC/codex/cursor/hermes
@@ -46,24 +64,71 @@ const LEGACY_SKILL_PRESERVED = join(VERSION_DIR, ".legacy_skill_preserved");
 // they are installed as a sibling dir of the extension.
 const WIKI_WORKER_DIR = join(PI_AGENT_DIR, "hivemind");
 
-function legacySkillIsHivemindOwned(): boolean {
-  // The old installer always wrote this sentinel alongside its legacy skill.
-  // Once this installer sees a user-owned path, the preservation marker keeps
-  // later uninstall calls from mistaking the package version stamp for
-  // ownership of that path.
-  return existsSync(LEGACY_SKILL_DIR) &&
-    !isLink(LEGACY_SKILL_DIR) &&
-    !existsSync(LEGACY_SKILL_PRESERVED) &&
-    existsSync(join(VERSION_DIR, ".hivemind_version"));
+type LegacySkillInspection =
+  | { state: "absent" }
+  | { state: "generated" }
+  | { state: "preserve"; reason: string };
+
+function inspectLegacySkill(): LegacySkillInspection {
+  let dirStat;
+  try {
+    dirStat = lstatSync(LEGACY_SKILL_DIR);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { state: "absent" };
+    return { state: "preserve", reason: "the path could not be inspected" };
+  }
+
+  if (dirStat.isSymbolicLink()) {
+    return { state: "preserve", reason: "the path is a symlink" };
+  }
+  if (!dirStat.isDirectory()) {
+    return { state: "preserve", reason: "the path is not a directory" };
+  }
+
+  let entries;
+  try {
+    entries = readdirSync(LEGACY_SKILL_DIR, { withFileTypes: true });
+  } catch {
+    return { state: "preserve", reason: "the directory could not be inspected" };
+  }
+  if (entries.length !== 1 || entries[0].name !== "SKILL.md" || !entries[0].isFile()) {
+    return { state: "preserve", reason: "the directory has unverified contents" };
+  }
+
+  try {
+    const digest = createHash("sha256").update(readFileSync(LEGACY_SKILL_PATH)).digest("hex");
+    return LEGACY_SKILL_DIGESTS.has(digest)
+      ? { state: "generated" }
+      : { state: "preserve", reason: "SKILL.md does not match a shipped legacy artifact" };
+  } catch {
+    return { state: "preserve", reason: "SKILL.md could not be inspected" };
+  }
 }
 
-function removeOwnedLegacySkill(): void {
-  if (!existsSync(LEGACY_SKILL_DIR)) return;
-  if (!legacySkillIsHivemindOwned()) {
-    warn(`  pi             preserving unowned legacy skill at ${LEGACY_SKILL_DIR}`);
-    return;
+function removeGeneratedLegacySkill(): boolean {
+  const inspection = inspectLegacySkill();
+  if (inspection.state === "absent") return false;
+  if (inspection.state === "preserve") {
+    warn(
+      `  pi             preserving legacy skill at ${LEGACY_SKILL_DIR}: ${inspection.reason}; ` +
+      "remove it manually if it is obsolete",
+    );
+    return false;
   }
-  rmSync(LEGACY_SKILL_DIR, { recursive: true, force: true });
+
+  try {
+    // Avoid recursive deletion: the verified historical directory contained
+    // only this file, and rmdir will refuse to remove a now-nonempty directory.
+    unlinkSync(LEGACY_SKILL_PATH);
+    rmdirSync(LEGACY_SKILL_DIR);
+    return true;
+  } catch {
+    warn(
+      `  pi             legacy skill cleanup stopped at ${LEGACY_SKILL_DIR}; ` +
+      "inspect the path and remove it manually if it is obsolete",
+    );
+    return false;
+  }
 }
 
 const HIVEMIND_BLOCK_BODY = `${HIVEMIND_BLOCK_START}
@@ -98,7 +163,7 @@ export function installPi(): void {
   // Clean up any per-agent SKILL.md left by an older installer — pi reads
   // skills from both ~/.pi/agent/skills/ and ~/.agents/skills/, so a local
   // drop collides with the codex installer's shared agentskills.io symlink.
-  removeOwnedLegacySkill();
+  removeGeneratedLegacySkill();
 
   // 1. AGENTS.md hivemind block (idempotent upsert). Pi auto-loads this every turn.
   const prior = existsSync(AGENTS_MD) ? readFileSync(AGENTS_MD, "utf-8") : null;
@@ -124,7 +189,6 @@ export function installPi(): void {
 
   ensureDir(VERSION_DIR);
   writeVersionStamp(VERSION_DIR, getVersion());
-  writeFileSync(LEGACY_SKILL_PRESERVED, "The current installer does not own ~/.pi/agent/skills/hivemind-memory.\n");
 
   log(`  pi             AGENTS.md updated -> ${AGENTS_MD}`);
   log(`  pi             extension installed -> ${EXTENSION_PATH}`);
@@ -134,13 +198,8 @@ export function installPi(): void {
 }
 
 export function uninstallPi(): void {
-  if (existsSync(LEGACY_SKILL_DIR)) {
-    if (!legacySkillIsHivemindOwned()) {
-      warn(`  pi             preserving unowned legacy skill at ${LEGACY_SKILL_DIR}`);
-    } else {
-      rmSync(LEGACY_SKILL_DIR, { recursive: true, force: true });
-      log(`  pi             removed ${LEGACY_SKILL_DIR}`);
-    }
+  if (removeGeneratedLegacySkill()) {
+    log(`  pi             removed ${LEGACY_SKILL_DIR}`);
   }
   if (existsSync(EXTENSION_PATH)) {
     rmSync(EXTENSION_PATH, { force: true });
