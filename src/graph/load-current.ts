@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { deriveProjectKey } from "../utils/repo-identity.js";
 import { readLastBuild } from "./last-build.js";
@@ -52,7 +52,7 @@ export function loadCurrentSnapshotDetails(
   // before turning it into a path under the graph snapshot directory.
   if (!/^[A-Za-z0-9._-]+$/.test(fileBase)) return null;
   const snapPath = join(baseDir, "snapshots", `${fileBase}.json`);
-  if (!existsSync(snapPath)) return null;
+  if (!existsSync(snapPath) || !lstatSync(snapPath).isFile()) return null;
   try {
     const snap = JSON.parse(readFileSync(snapPath, "utf8")) as GraphSnapshot;
     if (!Array.isArray(snap.nodes) || !Array.isArray(snap.links)) return null;

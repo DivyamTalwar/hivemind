@@ -136,6 +136,18 @@ describe("loadDashboardData", () => {
     expect(result.graph!.snapshotPath.endsWith("actual.json")).toBe(true);
   });
 
+  it("rejects a legacy pointer whose snapshot metadata names another commit", async () => {
+    const { repoDir, snapshotsDir } = snapshotsDirFor(graphsHome, "/tmp");
+    mkdirSync(snapshotsDir, { recursive: true });
+    writeFileSync(join(repoDir, "latest-commit.txt"), "expected-head\n");
+    writeFileSync(join(snapshotsDir, "expected-head.json"), JSON.stringify({
+      graph: { commit_sha: "other-head" }, nodes: [{ id: "wrong" }], links: [],
+    }));
+
+    const result = await loadDashboardData({ cwd: "/tmp", graphsHome, creds: null });
+    expect(result.graph).toBeNull();
+  });
+
   it("uses this worktree's build pointer instead of a newer sibling snapshot", async () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "hm-dash-git-"));
     const sibling = join(fixtureRoot, "feature");

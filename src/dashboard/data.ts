@@ -154,7 +154,7 @@ function validSnapshotName(name: string): boolean {
   return /^[A-Za-z0-9._-]+\.json$/.test(name);
 }
 
-function parseSnapshot(path: string, repoKey: string): DashboardGraphSummary | null {
+function parseSnapshot(path: string, repoKey: string, expectedCommitSha?: string): DashboardGraphSummary | null {
   if (!validSnapshotName(path.split("/").pop() ?? "")) return null;
   let raw: string;
   try {
@@ -184,6 +184,10 @@ function parseSnapshot(path: string, repoKey: string): DashboardGraphSummary | n
     log(`snapshot repo mismatch: expected ${repoKey}, got ${String(graph.repo_key)}`);
     return null;
   }
+  if (expectedCommitSha !== undefined && graph?.commit_sha !== undefined && graph.commit_sha !== expectedCommitSha) {
+    log(`snapshot head mismatch: pointer expects ${expectedCommitSha}, got ${String(graph?.commit_sha)}`);
+    return null;
+  }
   return snapshotSummary(path, parsed);
 }
 
@@ -192,6 +196,7 @@ function resolveLegacySnapshot(repoDir: string, repoKey: string): DashboardGraph
   if (!existsSync(snapshotsDir)) return null;
 
   let snapshotPath: string | null = null;
+  let pointedCommit: string | undefined;
 
   // Preferred path: follow latest-commit.txt. This is the canonical
   // pointer the producer maintains atomically alongside each build.
@@ -200,6 +205,7 @@ function resolveLegacySnapshot(repoDir: string, repoKey: string): DashboardGraph
     try {
       const sha = readFileSync(pointer, "utf-8").trim();
       if (sha && /^[A-Za-z0-9._-]+$/.test(sha)) {
+        pointedCommit = sha;
         const candidate = join(snapshotsDir, `${sha}.json`);
         if (existsSync(candidate) && lstatSync(candidate).isFile()) snapshotPath = candidate;
         else log(`latest-commit.txt points at missing ${sha}.json — scanning snapshots/`);
@@ -241,7 +247,7 @@ function resolveLegacySnapshot(repoDir: string, repoKey: string): DashboardGraph
 
   if (!snapshotPath) return null;
 
-  return parseSnapshot(snapshotPath, repoKey);
+  return parseSnapshot(snapshotPath, repoKey, pointedCommit);
 }
 
 async function loadKpis(creds: Credentials | null): Promise<DashboardKpis> {
