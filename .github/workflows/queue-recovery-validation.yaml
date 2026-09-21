@@ -1,0 +1,91 @@
+name: Session queue recovery validation
+on:
+  push:
+    branches: [audit/queue-recovery-20260922]
+permissions:
+  contents: write
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          path: audit-control
+          persist-credentials: false
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ce30de7ca94115cb73fa991538c6d2595ac2622a
+          path: work
+          persist-credentials: false
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+      - name: Install and build baseline
+        working-directory: work
+        env:
+          HUSKY: '0'
+        run: npm ci > /tmp/install.log 2>&1 || { tail -100 /tmp/install.log; exit 1; }
+      - name: Confirm real-filesystem negative controls
+        working-directory: work
+        run: |
+          python3 ../audit-control/audit/queue-recovery.py test-only
+          set +e
+          npx vitest run tests/claude-code/session-queue.test.ts -t 'session queue recovery record boundaries' --reporter=json --outputFile=/tmp/queue-before.json > /tmp/queue-before.log 2>&1
+          code=$?
+          set -e
+          python3 - <<'PY'
+          import json
+          r = json.load(open('/tmp/queue-before.json'))
+          print({k: r[k] for k in ['numFailedTests', 'numPassedTests']})
+          for f in r['testResults']:
+              for t in f['assertionResults']:
+                  if t['status'] != 'skipped': print(t['status'], t['fullName'], t['failureMessages'])
+          assert r['numFailedTests'] == 3
+          assert r['numPassedTests'] == 2
+          PY
+          test "$code" -ne 0
+      - name: Apply minimal fix and run affected suites
+        working-directory: work
+        run: |
+          python3 ../audit-control/audit/queue-recovery.py fix
+          npx vitest run tests/claude-code/session-queue.test.ts tests/claude-code/session-queue-append-atomicity.test.ts tests/claude-code/cowork-queue-leak.test.ts
+      - name: Typecheck build duplication and bundle audit
+        working-directory: work
+        run: |
+          npm run typecheck
+          npm run build
+          npm run dup > /tmp/dup.log 2>&1 || { tail -100 /tmp/dup.log; exit 1; }
+          npm run audit:openclaw -- --criticals-only
+      - name: Full test suite with coverage
+        working-directory: work
+        run: |
+          npx vitest run --coverage > /tmp/queue-full.log 2>&1 || { tail -100 /tmp/queue-full.log; exit 1; }
+          grep -E 'Test Files|Tests |Coverage summary|Statements|Branches|Functions|Lines ' /tmp/queue-full.log
+      - name: Publish only tested source and tests
+        working-directory: work
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HUSKY: '0'
+        run: |
+          gh auth setup-git
+          git config user.name 'Divyam Talwar'
+          git config user.email '194859478+DivyamTalwar@users.noreply.github.com'
+          git checkout -b fix/session-queue-recovery-boundaries
+          git add src/hooks/session-queue.ts tests/claude-code/session-queue.test.ts
+          git diff --cached --check
+          git diff --cached --stat
+          git commit -m 'fix(queue): preserve record boundaries when recovering inflight rows'
+          git push origin HEAD:refs/heads/fix/session-queue-recovery-boundaries
+          git rev-parse HEAD
+      - name: Preserve validation evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: queue-recovery-evidence
+          path: |
+            /tmp/queue-before.json
+            /tmp/queue-before.log
+            /tmp/queue-full.log
+            /tmp/dup.log
+          retention-days: 7
