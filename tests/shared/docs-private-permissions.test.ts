@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { writePrivateDoc, readPrivateDoc, deletePrivateDoc, type PrivateDoc } from "../../src/docs/private-store.js";
 
@@ -36,9 +37,9 @@ describe.skipIf(process.platform === "win32")("private doc store filesystem perm
   });
 
   function storePath(): string {
-    const stores = readdirSync(root).filter((name) => name.endsWith(".json"));
-    expect(stores).toHaveLength(1);
-    return join(root, stores[0]);
+    const filename = createHash("sha256").update("project\u0000b:private").digest("hex") + ".json";
+    expect(readdirSync(root)).toEqual([filename]);
+    return join(root, filename);
   }
 
   it("keeps unpublished contents owner-only even under umask 022", () => {
