@@ -113,7 +113,10 @@ function isHivemindHook(entry: unknown): boolean {
 
 function buildHookEntry(bundleFile: string, timeout: number, matcher?: string): HermesHookEntry {
   const entry: HermesHookEntry = {
-    command: `node ${join(BUNDLE_DIR, bundleFile)}`,
+    // Hermes executes hook commands through a shell. Quote the absolute path
+    // because home directories commonly contain spaces (especially on
+    // Windows), and an unquoted path is split into multiple argv entries.
+    command: `node "${join(BUNDLE_DIR, bundleFile)}"`,
     timeout,
   };
   if (matcher) entry.matcher = matcher;

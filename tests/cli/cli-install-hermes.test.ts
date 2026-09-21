@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import * as yaml from "js-yaml";
 import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
@@ -21,7 +22,8 @@ let tmpPkg: string;
 
 beforeEach(() => {
   tmpRoot = join(tmpdir(), `hm-hermes-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  tmpHome = join(tmpRoot, "home");
+  // Exercise the actual shell command shape against a path with spaces.
+  tmpHome = join(tmpRoot, "home with spaces");
   tmpPkg = join(tmpRoot, "pkg");
   mkdirSync(tmpHome, { recursive: true });
 
@@ -71,6 +73,18 @@ describe("installHermes — cold install", () => {
     expect(existsSync(join(tmpHome, ".hivemind", "mcp", "server.js"))).toBe(true);
     expect(readFileSync(join(tmpHome, ".hermes", "skills", "hivemind-memory", ".hivemind_version"), "utf-8")).toBe("3.4.5");
     expect(readFileSync(join(tmpHome, ".hermes", "hivemind", ".hivemind_version"), "utf-8")).toBe("3.4.5");
+  });
+
+  it.skipIf(process.platform === "win32")("emits hook commands that execute when HOME contains spaces", async () => {
+    const { installHermes } = await importInstaller();
+    installHermes();
+
+    const cfg = readConfig();
+    const command = cfg.hooks.on_session_start[0].command as string;
+    // This is the same shell boundary Hermes uses for command hooks. The
+    // fixture bundle is a valid no-op Node script, so success proves the
+    // complete emitted command is executable, not merely string-shaped.
+    expect(() => execFileSync("sh", ["-c", command], { stdio: "pipe" })).not.toThrow();
   });
 
   it("config.yaml has hivemind under mcp_servers AND hooks AND hooks_auto_accept=true", async () => {
