@@ -22,24 +22,51 @@ export function workTreeIdFor(cwd: string): string {
   return createHash("sha256").update(cwd).digest("hex").slice(0, 16);
 }
 
-/** Load the latest built snapshot for `cwd`, or null if unavailable/invalid. */
-export function loadCurrentSnapshot(cwd: string): GraphSnapshot | null {
+export interface CurrentSnapshot {
+  snapshot: GraphSnapshot;
+  snapshotPath: string;
+}
+
+export interface LoadCurrentSnapshotOptions {
+  /** Override the graph state root for hermetic callers and tests. */
+  graphsHome?: string;
+}
+
+/** Load the latest built snapshot and its path for `cwd`, or null if invalid. */
+export function loadCurrentSnapshotDetails(
+  cwd: string,
+  opts: LoadCurrentSnapshotOptions = {},
+): CurrentSnapshot | null {
   let baseDir: string;
+  let repoKey: string;
   try {
-    baseDir = repoDir(deriveProjectKey(cwd).key);
+    repoKey = deriveProjectKey(cwd).key;
+    baseDir = opts.graphsHome === undefined ? repoDir(repoKey) : join(opts.graphsHome, repoKey);
   } catch {
     return null;
   }
   const last = readLastBuild(baseDir, workTreeIdFor(cwd));
   if (last === null) return null;
   const fileBase = last.commit_sha ?? last.snapshot_sha256;
+  // The state file is local input. Keep it a single safe filename component
+  // before turning it into a path under the graph snapshot directory.
+  if (!/^[A-Za-z0-9._-]+$/.test(fileBase)) return null;
   const snapPath = join(baseDir, "snapshots", `${fileBase}.json`);
   if (!existsSync(snapPath)) return null;
   try {
     const snap = JSON.parse(readFileSync(snapPath, "utf8")) as GraphSnapshot;
     if (!Array.isArray(snap.nodes) || !Array.isArray(snap.links)) return null;
-    return snap;
+    const graph = snap.graph as Partial<GraphSnapshot["graph"]> | undefined;
+    if (graph !== undefined && (typeof graph !== "object" || graph === null)) return null;
+    if (graph?.repo_key !== undefined && graph.repo_key !== repoKey) return null;
+    if (graph?.commit_sha !== undefined && graph.commit_sha !== last.commit_sha) return null;
+    return { snapshot: snap, snapshotPath: snapPath };
   } catch {
     return null;
   }
+}
+
+/** Load the latest built snapshot for `cwd`, or null if unavailable/invalid. */
+export function loadCurrentSnapshot(cwd: string, opts: LoadCurrentSnapshotOptions = {}): GraphSnapshot | null {
+  return loadCurrentSnapshotDetails(cwd, opts)?.snapshot ?? null;
 }
