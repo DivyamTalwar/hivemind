@@ -1,0 +1,84 @@
+name: Cowork split-write regression validation
+on:
+  push:
+    branches: [audit/cowork-recovery-20260922]
+permissions:
+  contents: write
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          path: audit-control
+          persist-credentials: false
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ce30de7ca94115cb73fa991538c6d2595ac2622a
+          path: work
+          persist-credentials: false
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+      - name: Install and build baseline
+        working-directory: work
+        env:
+          HUSKY: '0'
+        run: npm ci
+      - name: Add regression tests to unmodified source
+        working-directory: work
+        run: python3 ../audit-control/audit/cowork-partial-line.py test-only
+      - name: Confirm baseline detects the split-write bug
+        working-directory: work
+        run: |
+          set +e
+          npx vitest run tests/claude-code/cowork-queue-leak.test.ts -t 'unterminated Cowork records' --reporter=json --outputFile=/tmp/cowork-before.json > /tmp/cowork-before.log 2>&1
+          code=$?
+          set -e
+          cat /tmp/cowork-before.log
+          python3 - <<'PY'
+          import json
+          r = json.load(open('/tmp/cowork-before.json'))
+          print(json.dumps(r, indent=2))
+          assert r['numFailedTests'] == 2, 'expected exactly the two split-write regressions to fail'
+          assert r['numPassedTests'] == 2, 'compatibility controls must pass on baseline'
+          PY
+          test "$code" -ne 0
+      - name: Apply minimal production fix
+        working-directory: work
+        run: python3 ../audit-control/audit/cowork-partial-line.py fix
+      - name: Run affected ingestion and queue suites
+        working-directory: work
+        run: npx vitest run tests/claude-code/cowork-ingest.test.ts tests/claude-code/cowork-queue-leak.test.ts tests/claude-code/session-queue.test.ts
+      - name: Typecheck and rebuild shipped bundles
+        working-directory: work
+        run: npm run typecheck && npm run build
+      - name: Full test suite with coverage
+        working-directory: work
+        run: npx vitest run --coverage
+      - name: Publish only the tested source and regression changes
+        working-directory: work
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HUSKY: '0'
+        run: |
+          gh auth setup-git
+          git config user.name 'Divyam Talwar'
+          git config user.email '194859478+DivyamTalwar@users.noreply.github.com'
+          git checkout -b fix/cowork-partial-transcript-records
+          git add src/mcp/cowork-ingest.ts tests/claude-code/cowork-queue-leak.test.ts
+          git diff --cached --check
+          git diff --cached --stat
+          git commit -m 'fix(cowork): retry incomplete transcript records without advancing progress'
+          git push origin HEAD:refs/heads/fix/cowork-partial-transcript-records
+          git rev-parse HEAD
+      - name: Preserve negative-control evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: cowork-regression-evidence
+          path: |
+            /tmp/cowork-before.json
+            /tmp/cowork-before.log
+          retention-days: 7
