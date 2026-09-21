@@ -1,0 +1,35 @@
+name: Contribution audit validation
+
+on:
+  push:
+    branches: [audit/validation-20260922]
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          persist-credentials: false
+      - name: Archive tracked source for isolated review
+        run: git archive --format=tar.gz --output=/tmp/hivemind-audit-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: hivemind-audit-source
+          path: /tmp/hivemind-audit-source.tar.gz
+          retention-days: 3
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm ci
+        env:
+          HUSKY: '0'
+      - name: Build baseline
+        run: npm run build
+      - name: Run baseline tests
+        run: npx vitest run --coverage
