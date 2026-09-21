@@ -1,44 +1,115 @@
-name: Combined capture recovery validation
+name: Independent and combined contribution validation
 on:
   push:
     branches: [audit/combined-capture-validation-20260922]
 permissions:
   contents: read
 jobs:
-  combined:
+  validation:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Private document permissions
+            mode: private
+            fix_ref: 677e122f085a24c51056e3ae117679b9c2372624
+            regression: tests/shared/docs-private-permissions.test.ts
+            baseline_failures: 3
+            expected_total: 5852
+          - name: Standalone daemon spawn errors
+            mode: spawn
+            fix_ref: 53a38ccdf74e6ebf0b6240b4fc58272ffc2d410e
+            regression: tests/shared/standalone-embed-spawn-error.test.ts
+            baseline_failures: 1
+            expected_total: 5850
+          - name: All four independent fixes combined
+            mode: combined
+            fix_ref: ce30de7ca94115cb73fa991538c6d2595ac2622a
+            regression: ''
+            baseline_failures: 0
+            expected_total: 5862
     steps:
       - uses: actions/checkout@v6.0.2
         with:
-          ref: 75b015c80a67bba0e22083bf2aebcf70c1470de2
+          ref: ce30de7ca94115cb73fa991538c6d2595ac2622a
           fetch-depth: 0
           persist-credentials: false
-      - name: Compose the independently tested commits without changing either branch
-        run: |
-          git config user.name 'Divyam Talwar'
-          git config user.email '194859478+DivyamTalwar@users.noreply.github.com'
-          git cherry-pick 728aa7de466e51ba05174eb5ec7e92576456a48b
-          git log -3 --oneline
-          git diff ce30de7ca94115cb73fa991538c6d2595ac2622a...HEAD --check
       - uses: actions/setup-node@v6.4.0
         with:
           node-version: 22
-      - name: Install build and duplication check
+      - name: Install and build unmodified baseline
         env:
           HUSKY: '0'
+        run: npm ci > /tmp/validation-install.log 2>&1 || { tail -100 /tmp/validation-install.log; exit 1; }
+      - name: Demonstrate the recovered regression tests fail on unmodified production code
+        if: matrix.mode != 'combined'
+        env:
+          FIX_REF: ${{ matrix.fix_ref }}
+          REGRESSION: ${{ matrix.regression }}
+          EXPECTED_FAILURES: ${{ matrix.baseline_failures }}
         run: |
-          npm ci > /tmp/combined-install.log 2>&1 || { tail -80 /tmp/combined-install.log; exit 1; }
+          test ! -e "$REGRESSION"
+          git show "$FIX_REF:$REGRESSION" > "$REGRESSION"
+          set +e
+          npx vitest run "$REGRESSION" --reporter=json --outputFile=/tmp/validation-negative.json > /tmp/validation-negative.log 2>&1
+          code=$?
+          set -e
+          python3 - <<'PY'
+          import json, os
+          r = json.load(open('/tmp/validation-negative.json'))
+          print({k: r[k] for k in ['numFailedTests', 'numPassedTests']})
+          for f in r['testResults']:
+              for t in f['assertionResults']:
+                  print(t['status'], t['fullName'], t['failureMessages'])
+          assert r['numFailedTests'] == int(os.environ['EXPECTED_FAILURES'])
+          assert r['numPassedTests'] == 0
+          PY
+          test "$code" -ne 0
+          rm -- "$REGRESSION"
+      - name: Check out exactly the prepared fix or compose the four commits locally
+        env:
+          FIX_REF: ${{ matrix.fix_ref }}
+          MODE: ${{ matrix.mode }}
+          HUSKY: '0'
+        run: |
+          git config user.name 'Divyam Talwar'
+          git config user.email '194859478+DivyamTalwar@users.noreply.github.com'
+          if [ "$MODE" = combined ]; then
+            git cherry-pick 75b015c80a67bba0e22083bf2aebcf70c1470de2
+            git cherry-pick 728aa7de466e51ba05174eb5ec7e92576456a48b
+            git cherry-pick 677e122f085a24c51056e3ae117679b9c2372624
+            git cherry-pick 53a38ccdf74e6ebf0b6240b4fc58272ffc2d410e
+          else
+            git checkout --detach "$FIX_REF"
+          fi
+          git log -5 --oneline
+          git diff ce30de7ca94115cb73fa991538c6d2595ac2622a...HEAD --check
+      - name: Build typecheck duplication and critical-only bundle audit
+        run: |
           npm run typecheck
-          npm run dup > /tmp/combined-dup.log 2>&1 || { tail -80 /tmp/combined-dup.log; exit 1; }
+          npm run build > /tmp/validation-build.log 2>&1 || { tail -100 /tmp/validation-build.log; exit 1; }
+          npm run dup > /tmp/validation-dup.log 2>&1 || { tail -100 /tmp/validation-dup.log; exit 1; }
           npm run audit:openclaw -- --criticals-only
-      - name: Full combined test suite and coverage
+      - name: Full test suite and coverage
+        env:
+          EXPECTED_TOTAL: ${{ matrix.expected_total }}
         run: |
-          npx vitest run --coverage > /tmp/combined-tests.log 2>&1 || { tail -120 /tmp/combined-tests.log; exit 1; }
-          grep -E 'Test Files|Tests |Coverage summary|Statements|Branches|Functions|Lines ' /tmp/combined-tests.log
+          npx vitest run --coverage --reporter=json --outputFile=/tmp/validation-full.json > /tmp/validation-full.log 2>&1 || { tail -100 /tmp/validation-full.log; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          r = json.load(open('/tmp/validation-full.json'))
+          print({k: r[k] for k in ['numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests', 'success']})
+          assert r['success'] is True
+          assert r['numFailedTests'] == 0
+          assert r['numPassedTests'] == int(os.environ['EXPECTED_TOTAL'])
+          PY
+          grep -E 'Coverage summary|Statements|Branches|Functions|Lines ' /tmp/validation-full.log
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: combined-capture-evidence
-          path: /tmp/combined-*.log
+          name: contribution-validation-${{ matrix.mode }}
+          path: /tmp/validation-*
           retention-days: 7
