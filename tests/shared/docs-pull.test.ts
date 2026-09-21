@@ -12,6 +12,7 @@ import {
   ensureGitignoreEntries,
   localDocPath,
   pullDocs,
+  pullContextKey,
   readPullManifest,
   writePullManifest,
   GITIGNORE_ENTRIES,
@@ -68,7 +69,10 @@ describe("pullDocs", () => {
   });
 
   it("delta protocol: the cursor bounds the next read; --force ignores it", async () => {
-    writePullManifest(dir, { cursor: "2026-07-08T11:00:00Z" });
+    writePullManifest(dir, {
+      cursor: "2026-07-08T11:00:00Z",
+      contexts: { [pullContextKey(P, "main")]: "2026-07-08T11:00:00Z" },
+    });
     const { calls, query } = makeQuery([]);
     await pullDocs({ query, tableName: "hivemind_docs", repoRoot: dir, project: P });
     // INCLUSIVE (>=): a strict > would skip a doc written with exactly the
@@ -76,6 +80,28 @@ describe("pullDocs", () => {
     expect(calls[0]).toContain(`updated_at >= '2026-07-08T11:00:00Z'`);
     await pullDocs({ query, tableName: "hivemind_docs", repoRoot: dir, project: P, force: true });
     expect(calls[1]).not.toContain("updated_at >=");
+  });
+
+  it("does not apply one project's or branch's cursor to another pull context", async () => {
+    const featureRow = {
+      id: `${P}|b:feature|src/feature.ts`,
+      doc_id: "src/feature.ts",
+      content: "# Feature doc",
+      status: "active",
+      updated_at: "2026-07-08T09:00:00Z",
+    };
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes(`${P}|main|`)) return [row("src/main.ts", "# Main doc", "2026-07-08T10:00:00Z")];
+      if (sql.includes(`${P}|b:feature|`) && sql.includes("updated_at >=")) return [];
+      if (sql.includes(`${P}|b:feature|`)) return [featureRow];
+      return [];
+    });
+
+    await pullDocs({ query, tableName: "hivemind_docs", repoRoot: dir, project: P, scope: "main" });
+    const report = await pullDocs({ query, tableName: "hivemind_docs", repoRoot: dir, project: P, scope: "b:feature" });
+
+    expect(report.written).toEqual(["src/feature.ts.hivemind.md"]);
+    expect(readFileSync(join(dir, "src/feature.ts.hivemind.md"), "utf-8")).toBe("# Feature doc\n");
   });
 
   it("is deterministic and mtime-stable: an unchanged doc is not rewritten", async () => {
