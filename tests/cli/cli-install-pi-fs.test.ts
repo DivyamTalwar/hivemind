@@ -112,9 +112,23 @@ describe("installPi — re-install / cleanup", () => {
     const legacy = join(tmpHome, ".pi", "agent", "skills", "hivemind-memory");
     mkdirSync(legacy, { recursive: true });
     writeFileSync(join(legacy, "SKILL.md"), "stale skill body");
+    mkdirSync(join(tmpHome, ".pi", "agent", ".hivemind"), { recursive: true });
+    writeFileSync(join(tmpHome, ".pi", "agent", ".hivemind", ".hivemind_version"), "6.0.0\n");
     const { installPi } = await importInstaller();
     installPi();
     expect(existsSync(legacy)).toBe(false);
+  });
+
+  it("preserves a same-named user skill when no Hivemind ownership marker exists", async () => {
+    const legacy = join(tmpHome, ".pi", "agent", "skills", "hivemind-memory");
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, "SKILL.md"), "user-authored skill");
+    const { installPi, uninstallPi } = await importInstaller();
+    installPi();
+    expect(readFileSync(join(legacy, "SKILL.md"), "utf-8")).toBe("user-authored skill");
+
+    uninstallPi();
+    expect(readFileSync(join(legacy, "SKILL.md"), "utf-8")).toBe("user-authored skill");
   });
 });
 
@@ -154,6 +168,8 @@ describe("uninstallPi", () => {
     const legacy = join(tmpHome, ".pi", "agent", "skills", "hivemind-memory");
     mkdirSync(legacy, { recursive: true });
     writeFileSync(join(legacy, "SKILL.md"), "stale");
+    mkdirSync(join(tmpHome, ".pi", "agent", ".hivemind"), { recursive: true });
+    writeFileSync(join(tmpHome, ".pi", "agent", ".hivemind", ".hivemind_version"), "6.0.0\n");
     const { uninstallPi } = await importInstaller();
     uninstallPi();
     expect(existsSync(legacy)).toBe(false);

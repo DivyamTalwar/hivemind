@@ -1,6 +1,6 @@
 import { existsSync, writeFileSync, rmSync, readFileSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
-import { HOME, pkgRoot, ensureDir, syncDir, reportPruned, writeVersionStamp, log } from "./util.js";
+import { HOME, pkgRoot, ensureDir, syncDir, reportPruned, writeVersionStamp, log, isLink, warn } from "./util.js";
 import { getVersion } from "./version.js";
 import {
   upsertMarkedBlock,
@@ -38,12 +38,33 @@ const LEGACY_SKILL_DIR = join(PI_AGENT_DIR, "skills", "hivemind-memory");
 const EXTENSIONS_DIR = join(PI_AGENT_DIR, "extensions");
 const EXTENSION_PATH = join(EXTENSIONS_DIR, "hivemind.ts");
 const VERSION_DIR = join(PI_AGENT_DIR, ".hivemind");
+const LEGACY_SKILL_PRESERVED = join(VERSION_DIR, ".legacy_skill_preserved");
 // Worker bundles the extension spawns (wiki-worker shells `pi --print` for
 // the AI summary; skillify / autopull / skillopt / notifications workers are
 // the shared modules pi cannot import as raw .ts). CC/codex/cursor/hermes
 // ship these inside their per-agent bundles; pi has no per-agent bundle so
 // they are installed as a sibling dir of the extension.
 const WIKI_WORKER_DIR = join(PI_AGENT_DIR, "hivemind");
+
+function legacySkillIsHivemindOwned(): boolean {
+  // The old installer always wrote this sentinel alongside its legacy skill.
+  // Once this installer sees a user-owned path, the preservation marker keeps
+  // later uninstall calls from mistaking the package version stamp for
+  // ownership of that path.
+  return existsSync(LEGACY_SKILL_DIR) &&
+    !isLink(LEGACY_SKILL_DIR) &&
+    !existsSync(LEGACY_SKILL_PRESERVED) &&
+    existsSync(join(VERSION_DIR, ".hivemind_version"));
+}
+
+function removeOwnedLegacySkill(): void {
+  if (!existsSync(LEGACY_SKILL_DIR)) return;
+  if (!legacySkillIsHivemindOwned()) {
+    warn(`  pi             preserving unowned legacy skill at ${LEGACY_SKILL_DIR}`);
+    return;
+  }
+  rmSync(LEGACY_SKILL_DIR, { recursive: true, force: true });
+}
 
 const HIVEMIND_BLOCK_BODY = `${HIVEMIND_BLOCK_START}
 ## Hivemind Memory
@@ -77,9 +98,7 @@ export function installPi(): void {
   // Clean up any per-agent SKILL.md left by an older installer — pi reads
   // skills from both ~/.pi/agent/skills/ and ~/.agents/skills/, so a local
   // drop collides with the codex installer's shared agentskills.io symlink.
-  if (existsSync(LEGACY_SKILL_DIR)) {
-    rmSync(LEGACY_SKILL_DIR, { recursive: true, force: true });
-  }
+  removeOwnedLegacySkill();
 
   // 1. AGENTS.md hivemind block (idempotent upsert). Pi auto-loads this every turn.
   const prior = existsSync(AGENTS_MD) ? readFileSync(AGENTS_MD, "utf-8") : null;
@@ -105,6 +124,7 @@ export function installPi(): void {
 
   ensureDir(VERSION_DIR);
   writeVersionStamp(VERSION_DIR, getVersion());
+  writeFileSync(LEGACY_SKILL_PRESERVED, "The current installer does not own ~/.pi/agent/skills/hivemind-memory.\n");
 
   log(`  pi             AGENTS.md updated -> ${AGENTS_MD}`);
   log(`  pi             extension installed -> ${EXTENSION_PATH}`);
@@ -115,8 +135,12 @@ export function installPi(): void {
 
 export function uninstallPi(): void {
   if (existsSync(LEGACY_SKILL_DIR)) {
-    rmSync(LEGACY_SKILL_DIR, { recursive: true, force: true });
-    log(`  pi             removed ${LEGACY_SKILL_DIR}`);
+    if (!legacySkillIsHivemindOwned()) {
+      warn(`  pi             preserving unowned legacy skill at ${LEGACY_SKILL_DIR}`);
+    } else {
+      rmSync(LEGACY_SKILL_DIR, { recursive: true, force: true });
+      log(`  pi             removed ${LEGACY_SKILL_DIR}`);
+    }
   }
   if (existsSync(EXTENSION_PATH)) {
     rmSync(EXTENSION_PATH, { force: true });
