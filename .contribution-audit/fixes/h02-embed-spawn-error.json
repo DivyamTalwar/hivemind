@@ -1,0 +1,35 @@
+{
+  "id": "h02-embed-spawn-error",
+  "base": "ce30de7ca94115cb73fa991538c6d2595ac2622a",
+  "branch": "fix/standalone-embed-spawn-errors",
+  "title": "fix(embeddings): handle asynchronous standalone daemon spawn errors",
+  "expectedBaselineCases": 1,
+  "expectedBaselineFailures": 1,
+  "focused": ["tests/shared/standalone-embed-client.test.ts", "tests/claude-code/embeddings-client.test.ts"],
+  "tests": [{
+    "path": "tests/shared/standalone-embed-spawn-error.test.ts",
+    "content": "import { afterEach, describe, expect, it } from \"vitest\";\nimport { EventEmitter } from \"node:events\";\nimport { existsSync, mkdtempSync, rmSync, writeFileSync } from \"node:fs\";\nimport { tmpdir } from \"node:os\";\nimport { join } from \"node:path\";\nimport type { ChildProcess } from \"node:child_process\";\nimport { _setSpawnImpl, tryEmbedStandalone } from \"../../src/embeddings/standalone-embed-client.js\";\nimport { pidPathFor } from \"../../src/embeddings/protocol.js\";\n\nlet dir: string | undefined;\nafterEach(() => {\n  _setSpawnImpl(null);\n  if (dir) rmSync(dir, { recursive: true, force: true });\n  dir = undefined;\n});\n\ndescribe.skipIf(process.platform === \"win32\")(\"standalone daemon asynchronous spawn failure\", () => {\n  it(\"contains an asynchronous child error instead of letting it escape into the host\", async () => {\n    dir = mkdtempSync(join(tmpdir(), \"hivemind-spawn-error-\"));\n    const entry = join(dir, \"daemon.js\");\n    writeFileSync(entry, \"// Installed entry, but the OS refuses to spawn it.\\n\");\n    let emitted = false;\n    let escaped: unknown;\n    _setSpawnImpl(() => {\n      const child = Object.assign(new EventEmitter(), { unref() {} });\n      setImmediate(() => {\n        emitted = true;\n        // Node's ChildProcess reports EAGAIN/EACCES through this EventEmitter\n        // channel after spawn() returns, outside the surrounding try/catch.\n        // Catch only in the test so the unfixed behavior fails an assertion\n        // instead of crashing the Vitest worker.\n        try { child.emit(\"error\", new Error(\"spawn EAGAIN\")); }\n        catch (error) { escaped = error; }\n      });\n      return child as unknown as ChildProcess;\n    });\n    const result = await tryEmbedStandalone(\"document\", \"document\", {\n      socketDir: dir, daemonEntry: entry, requestTimeoutMs: 50, spawnWaitMs: 40,\n    });\n    expect(emitted).toBe(true);\n    expect(escaped).toBeUndefined();\n    expect(result).toBeNull();\n    expect(existsSync(pidPathFor(process.getuid?.() ?? \"default\", dir))).toBe(false);\n  });\n});\n"
+  }],
+  "changes": [
+    {
+      "path": "src/embeddings/standalone-embed-client.ts",
+      "edits": [{
+        "before": "    child.unref();\n    return true;",
+        "after": "    // OS spawn failures arrive asynchronously, outside this try/catch.\n    // Without a listener, an EAGAIN/EACCES can terminate the host agent.\n    // The bounded wait below owns pidfile cleanup, including concurrent\n    // callers; do not race that ownership protocol from this callback.\n    child.once(\"error\", () => { /* degrade to the existing timeout/null path */ });\n    child.unref();\n    return true;"
+      }]
+    },
+    {
+      "path": "tests/shared/standalone-embed-client.test.ts",
+      "edits": [
+        {
+          "before": "import { createServer, type Server, type Socket } from \"node:net\";",
+          "after": "import { createServer, type Server, type Socket } from \"node:net\";\nimport { EventEmitter } from \"node:events\";"
+        },
+        {
+          "before": "function makeFakeChild(): ChildProcess {\n  return {\n    unref() { /* */ },\n    pid: 999999,\n  } as unknown as ChildProcess;\n}",
+          "after": "function makeFakeChild(): ChildProcess {\n  return Object.assign(new EventEmitter(), {\n    unref() { /* */ },\n    pid: 999999,\n  }) as unknown as ChildProcess;\n}"
+        }
+      ]
+    }
+  ]
+}
