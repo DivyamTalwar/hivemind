@@ -173,6 +173,20 @@ describe("hivemind docs show", () => {
   it("requires a doc-id", async () => {
     expect(await run(["show"])).toBe(1);
   });
+
+  it("resolves a direct show lookup within the current repository", async () => {
+    const project = deriveProjectKey(process.cwd()).key;
+    const local = docRow({ project, content: "LOCAL DOC" });
+    const foreign = docRow({ project: "other-repo", content: "FOREIGN DOC", version: 99 });
+    queryMock.mockImplementation(async (sql: string) =>
+      sql.includes(`project = '${project}'`) ? [local] : [foreign],
+    );
+
+    await run(["show", "a.ts"]);
+
+    expect(logged.join("\n")).toContain("LOCAL DOC");
+    expect(logged.join("\n")).not.toContain("FOREIGN DOC");
+  });
 });
 
 describe("hivemind docs list", () => {
@@ -286,6 +300,22 @@ describe("hivemind docs archive", () => {
     // UPDATE-in-place (F1): archive flips status on the existing row, not a new INSERT.
     expect(sqls.some((s) => /UPDATE "hivemind_docs" SET/.test(s) && /status = 'archived'/.test(s))).toBe(true);
     expect(logged.join()).toMatch(/Archived doc a\.ts → v3/);
+  });
+
+  it("archives only the current repository's row", async () => {
+    const project = deriveProjectKey(process.cwd()).key;
+    const local = docRow({ id: "local-row", project, version: 2 });
+    const foreign = docRow({ id: "foreign-row", project: "other-repo", version: 99 });
+    queryMock.mockImplementation(async (sql: string) =>
+      sql.startsWith("SELECT") && sql.includes(`project = '${project}'`) ? [local] :
+        sql.startsWith("SELECT") ? [foreign] : [],
+    );
+
+    await run(["archive", "a.ts"]);
+
+    const update = queryMock.mock.calls.map((c) => c[0] as string).find((s) => /^UPDATE/.test(s));
+    expect(update).toContain(`WHERE id = '${local.id}'`);
+    expect(update).not.toContain(foreign.id);
   });
 });
 
