@@ -19,7 +19,8 @@
  * imports the gate runner, parallelMap, etc. — heavy for a hook).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -86,7 +87,14 @@ export function readLocalManifest(path: string = LOCAL_MANIFEST_PATH): LocalMani
 /** Write the manifest, creating parent directories as needed. */
 export function writeLocalManifest(m: LocalManifest, path: string = LOCAL_MANIFEST_PATH): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(m, null, 2));
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(m, null, 2));
+    renameSync(tmp, path);
+  } catch (e) {
+    try { unlinkSync(tmp); } catch { /* best effort cleanup */ }
+    throw e;
+  }
 }
 
 /**
