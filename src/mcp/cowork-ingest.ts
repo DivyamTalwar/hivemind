@@ -389,6 +389,14 @@ export function summarizeIdleSessions(
     }
 
     const sessionId = basename(path).replace(/\.jsonl$/, "");
+    // The transcript watermark records local queueing, not successful upload.
+    // Both workers read cloud rows, so defer this session until its durable
+    // queue has drained. Leave summarizedLines unchanged so a later idle tick
+    // retries even when the transcript itself has received no new content.
+    if (
+      existsSync(join(COWORK_QUEUE_DIR, `${sessionId}.jsonl`)) ||
+      existsSync(join(COWORK_QUEUE_DIR, `${sessionId}.inflight`))
+    ) continue;
     try {
       doSpawn(sessionId);
       state.summarizedLines[path] = processed;
