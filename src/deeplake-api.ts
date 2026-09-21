@@ -514,12 +514,14 @@ export class DeeplakeApi {
   private async _fetchTables(): Promise<{ tables: string[]; cacheable: boolean }> {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
+        const timeoutMs = getQueryTimeoutMs();
         const resp = await fetch(`${this.apiUrl}/workspaces/${this.workspaceId}/tables`, {
           headers: {
             Authorization: `Bearer ${this.token}`,
             "X-Activeloop-Org-Id": this.orgId,
             ...deeplakeClientHeader(),
           },
+          signal: AbortSignal.timeout(timeoutMs),
         });
         if (resp.ok) {
           const data = await resp.json() as { tables?: { table_name: string }[] };
@@ -533,7 +535,11 @@ export class DeeplakeApi {
           continue;
         }
         return { tables: [], cacheable: false };
-      } catch {
+      } catch (e: unknown) {
+        // A stalled metadata lookup is no more trustworthy than a failed one.
+        // Return the non-cacheable sentinel immediately, matching query()'s
+        // per-attempt timeout policy instead of retrying a known deadline.
+        if (isTimeoutError(e)) return { tables: [], cacheable: false };
         if (attempt < MAX_RETRIES) {
           await sleep(BASE_DELAY_MS * Math.pow(2, attempt));
           continue;
@@ -755,4 +761,3 @@ export class DeeplakeApi {
 export function _resetSdkStateForTesting(): void {
   _signalledBalanceExhausted = false;
 }
-
