@@ -35,7 +35,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /**
@@ -205,7 +205,9 @@ export async function pullSnapshot(
   // sibling's. Without this, after pull worktree-A would overwrite
   // worktree-B's metadata (or vice versa).
   const worktreeId = workTreeIdFor(cwd);
-  const local = readLastBuild(baseDir, worktreeId);
+  const snapshotsDir = join(baseDir, "snapshots");
+  const snapshotPath = join(snapshotsDir, `${head}.json`);
+  const local = readLastBuild(baseDir, worktreeId) ?? readLocalSnapshotState(snapshotPath, head);
   if (local !== null && local.commit_sha === head) {
     // CodeRabbit P1: empty cloud sha (legacy rows without the column
     // populated) is NOT proof local is current — it's "we don't know".
@@ -228,8 +230,6 @@ export async function pullSnapshot(
   // (canonicalJSON(snapshot)) — same function as writeSnapshot uses
   // locally — so the file we write here is byte-identical to what a
   // local build would have produced.
-  const snapshotsDir = join(baseDir, "snapshots");
-  const snapshotPath = join(snapshotsDir, `${head}.json`);
   const worktreeRoot = join(baseDir, "worktrees", worktreeId);
   try {
     writeFileAtomic(snapshotPath, cloudPayload);
@@ -303,6 +303,34 @@ function parseTs(raw: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+/** Recover freshness from a valid same-HEAD snapshot when its sidecar was lost. */
+function readLocalSnapshotState(snapshotPath: string, head: string): {
+  ts: number;
+  commit_sha: string;
+  snapshot_sha256: string;
+  node_count: number;
+  edge_count: number;
+} | null {
+  if (!existsSync(snapshotPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(snapshotPath, "utf8")) as Partial<GraphSnapshot>;
+    if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.links)) return null;
+    if (parsed.graph?.commit_sha !== head) return null;
+    const observationTs = parseTs(parsed.observation?.ts);
+    const ts = observationTs > 0 ? observationTs : statSync(snapshotPath).mtimeMs;
+    if (!Number.isFinite(ts) || ts <= 0) return null;
+    return {
+      ts,
+      commit_sha: head,
+      snapshot_sha256: computeSnapshotSha256(parsed as GraphSnapshot),
+      node_count: parsed.nodes.length,
+      edge_count: parsed.links.length,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function numOrUndefined(raw: unknown): number | undefined {

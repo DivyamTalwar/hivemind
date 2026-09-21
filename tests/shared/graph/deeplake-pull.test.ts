@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -326,6 +326,35 @@ describe("pullSnapshot — outcome resolution", () => {
     const parsed = JSON.parse(lastLine);
     expect(parsed.trigger).toBe("pull");
     expect(parsed.commit_sha).toBe("head1234abcd");
+  });
+
+  it("preserves a valid newer same-HEAD snapshot when its sidecar is missing", async () => {
+    const localSnapshot: GraphSnapshot = {
+      ...FIXTURE_SNAPSHOT,
+      observation: { ...FIXTURE_SNAPSHOT.observation, ts: "2026-06-03T00:00:00.000Z" },
+      nodes: [{ ...FIXTURE_SNAPSHOT.nodes[0]!, label: "local" }],
+    };
+    const snapshotPath = join(baseDir, "snapshots", "head1234abcd.json");
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(snapshotPath, canonicalSnapshot(localSnapshot));
+
+    const { api } = makeMockApi({
+      selectReturns: [{
+        snapshot_jsonb: CLOUD_PAYLOAD,
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
+        ts: "2026-06-02T00:00:00.000Z",
+        node_count: 1, edge_count: 0,
+        worktree_id: "remote-wt",
+      }],
+    });
+    const result = await pullSnapshot(tmpCwd, {
+      loadConfig: makeConfig,
+      readHead: () => "head1234abcd",
+      makeApi: () => api,
+    });
+
+    expect(result.kind).toBe("local-newer");
+    expect(readFileSync(snapshotPath, "utf8")).toBe(canonicalSnapshot(localSnapshot));
   });
 
   it("codex P1 regression: local sidecar points at a DIFFERENT commit → ignored, pull proceeds", async () => {
