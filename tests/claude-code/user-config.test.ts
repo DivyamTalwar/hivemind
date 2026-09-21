@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -67,6 +67,16 @@ describe("readUserConfig", () => {
     _setConfigPathForTesting(() => configPath);
     expect(getEmbeddingsEnabled()).toBe(false);
     expect(readFileSync(configPath, "utf-8")).toBe(original);
+  });
+
+  it("keeps passive reads non-throwing when the config cannot be read, without attempting migration", () => {
+    mkdirSync(configPath);
+    process.env.HIVEMIND_EMBEDDINGS = "true";
+
+    expect(readUserConfig()).toEqual({});
+    expect(getEmbeddingsEnabled()).toBe(true);
+    expect(() => setEmbeddingsEnabled(false)).toThrow(/could not be read/);
+    expect(existsSync(configPath)).toBe(true);
   });
 
   it("caches the parsed config across calls (single file read per process)", () => {

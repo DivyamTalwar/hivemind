@@ -59,12 +59,28 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
   clearFakeHome();
+  vi.doUnmock("node:fs");
   vi.restoreAllMocks();
   vi.resetModules();
 });
 
-async function importInstaller(): Promise<typeof import("../../src/cli/install-codex.js")> {
+async function importInstaller(configReadError?: NodeJS.ErrnoException): Promise<typeof import("../../src/cli/install-codex.js")> {
   vi.resetModules();
+  if (configReadError) {
+    const configPath = join(tmpHome, ".codex", "hooks.json");
+    vi.doMock("node:fs", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("node:fs")>();
+      return {
+        ...actual,
+        readFileSync: (path: unknown, ...args: unknown[]) => {
+          if (path === configPath) throw configReadError;
+          return (actual.readFileSync as (...inner: unknown[]) => unknown)(path, ...args);
+        },
+      };
+    });
+  } else {
+    vi.doUnmock("node:fs");
+  }
   vi.doMock("../../src/cli/util.js", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../src/cli/util.js")>();
     return { ...actual, pkgRoot: () => tmpPkg };
@@ -494,11 +510,27 @@ describe("uninstallCodex", () => {
     expect(after.hooks.SessionStart ?? []).toHaveLength(0);
   });
 
-  it("uninstall on a malformed hooks.json leaves the file untouched", async () => {
+  it("uninstall on a malformed hooks.json reports failure and leaves the file untouched", async () => {
     const { uninstallCodex } = await importInstaller();
     const hooksPath = join(tmpHome, ".codex", "hooks.json");
     writeFileSync(hooksPath, "{ this is not valid json");
-    expect(() => uninstallCodex()).not.toThrow();
+    expect(() => uninstallCodex()).toThrow(/not valid JSON/);
     expect(readFileSync(hooksPath, "utf-8")).toBe("{ this is not valid json");
+  });
+
+  it("validates hooks.json read errors before removing other Codex integration files", async () => {
+    const { installCodex } = await importInstaller();
+    installCodex();
+    const hooksPath = join(tmpHome, ".codex", "hooks.json");
+    const agentsPath = join(tmpHome, ".codex", "AGENTS.md");
+    const originalHooks = readFileSync(hooksPath, "utf-8");
+    const originalAgents = readFileSync(agentsPath, "utf-8");
+    const readError = Object.assign(new Error("injected hooks read failure"), { code: "EACCES" });
+    const { uninstallCodex } = await importInstaller(readError);
+
+    expect(() => uninstallCodex()).toThrow(/could not be read/);
+    expect(readFileSync(hooksPath, "utf-8")).toBe(originalHooks);
+    expect(readFileSync(agentsPath, "utf-8")).toBe(originalAgents);
+    expect(existsSync(join(tmpHome, ".agents", "skills", "hivemind-memory"))).toBe(true);
   });
 });

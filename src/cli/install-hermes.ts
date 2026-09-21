@@ -160,18 +160,34 @@ function stripHivemindHooks(existing: Record<string, HermesHookEntry[]> | undefi
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function readConfig(): HermesConfig {
-  if (!existsSync(CONFIG_PATH)) return {};
+function readConfig(): HermesConfig | null {
+  let raw: string;
   try {
-    const raw = readFileSync(CONFIG_PATH, "utf-8");
-    const parsed = yaml.load(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as HermesConfig;
-    }
-    throw new Error("root value is not a YAML object");
+    raw = readFileSync(CONFIG_PATH, "utf-8");
+  } catch (err) {
+    if (typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT") return null;
+    const detail = err instanceof Error && err.message ? `: ${err.message}` : "";
+    throw new Error(`Hermes config at ${CONFIG_PATH} could not be read${detail}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = yaml.load(raw);
   } catch {
     throw new Error(`Hermes config at ${CONFIG_PATH} is not valid YAML; fix or remove it, then rerun.`);
   }
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed as HermesConfig;
+  }
+  if ((parsed === undefined || parsed === null) && isEmptyYamlDocument(raw)) return {};
+  throw new Error(`Hermes config at ${CONFIG_PATH} must contain a YAML mapping; fix or remove it, then rerun.`);
+}
+
+function isEmptyYamlDocument(raw: string): boolean {
+  return raw.split(/\r?\n/).every(line => {
+    const trimmed = line.trim();
+    return trimmed === "" || trimmed.startsWith("#");
+  });
 }
 
 function writeConfig(cfg: HermesConfig): void {
@@ -198,9 +214,14 @@ function packagedSkillNames(): string[] {
 }
 
 export function installHermes(): void {
+  const srcBundle = join(pkgRoot(), "harnesses", "hermes", "bundle");
+  if (!existsSync(srcBundle)) {
+    throw new Error(`Hermes bundle missing at ${srcBundle}. Run 'npm run build' first.`);
+  }
+
   // Validate before touching any owned payload directories. Treating a
   // malformed config as empty would destroy every user setting on write.
-  const cfg = readConfig();
+  const cfg = readConfig() ?? {};
 
   // 1. Skills — agent context. hivemind-memory is written inline; everything
   //    else the installer ever put in that dir (an older version's
@@ -220,10 +241,6 @@ export function installHermes(): void {
   }
 
   // 2. Hook bundle — auto-capture via Hermes shell-hooks.
-  const srcBundle = join(pkgRoot(), "harnesses", "hermes", "bundle");
-  if (!existsSync(srcBundle)) {
-    throw new Error(`Hermes bundle missing at ${srcBundle}. Run 'npm run build' first.`);
-  }
   ensureDir(HIVEMIND_DIR);
   reportPruned("Hermes", syncDir(srcBundle, BUNDLE_DIR));
   const pluginNm = join(HIVEMIND_DIR, "node_modules");
@@ -254,6 +271,11 @@ export function installHermes(): void {
 }
 
 export function uninstallHermes(): void {
+  // Validate before removing any owned payload. If the config cannot be
+  // understood, uninstall must fail as one untouched operation rather than
+  // leave hooks pointing at a bundle that has already been deleted.
+  const cfg = readConfig();
+
   for (const dir of [SKILLS_DIR, ...packagedSkillNames().map(n => join(SKILLS_ROOT, n))]) {
     // A symlink at one of our names is the user's, never something we wrote.
     if (!existsSync(dir) || isLink(dir)) continue;
@@ -266,14 +288,7 @@ export function uninstallHermes(): void {
     log(`  Hermes         removed ${HIVEMIND_DIR}`);
   }
 
-  if (existsSync(CONFIG_PATH)) {
-    let cfg: HermesConfig;
-    try {
-      cfg = readConfig();
-    } catch (err) {
-      warn(`  Hermes         leaving malformed config untouched: ${(err as Error).message}`);
-      return;
-    }
+  if (cfg) {
     let touched = false;
     if (cfg.mcp_servers && typeof cfg.mcp_servers === "object" && SERVER_KEY in cfg.mcp_servers) {
       delete cfg.mcp_servers[SERVER_KEY];

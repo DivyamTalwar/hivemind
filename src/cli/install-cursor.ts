@@ -85,10 +85,17 @@ function mergeHooks(existing: Record<string, unknown> | null): Record<string, un
 }
 
 function readHooksConfig(): Record<string, unknown> | null {
-  if (!existsSync(HOOKS_PATH)) return null;
+  let raw: string;
+  try {
+    raw = readFileSync(HOOKS_PATH, "utf-8");
+  } catch (err) {
+    if (typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT") return null;
+    const detail = err instanceof Error && err.message ? `: ${err.message}` : "";
+    throw new Error(`Cursor hooks config at ${HOOKS_PATH} could not be read${detail}`);
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(HOOKS_PATH, "utf-8"));
+    parsed = JSON.parse(raw);
   } catch {
     throw new Error(`Cursor hooks config at ${HOOKS_PATH} is not valid JSON; fix or remove it, then rerun.`);
   }
@@ -142,14 +149,9 @@ export function installCursor(): void {
 }
 
 export function uninstallCursor(): void {
-  let existing: Record<string, unknown> | null;
-  try {
-    existing = readHooksConfig();
-  } catch (err) {
-    // Never delete or rewrite a file whose structure we cannot understand.
-    log(`  Cursor         leaving malformed hooks config untouched: ${(err as Error).message}`);
-    return;
-  }
+  // Validation errors propagate to the dispatcher, which reports FAILED.
+  // Nothing is removed or rewritten before this read succeeds.
+  const existing = readHooksConfig();
   if (!existing) {
     log("  Cursor         no hooks.json to clean");
     return;

@@ -127,11 +127,11 @@ describe("installCursor", () => {
     expect(existsSync(join(tmpHome, ".cursor", "hivemind"))).toBe(false);
   });
 
-  it("uninstall on a malformed hooks.json leaves the file untouched", async () => {
+  it("uninstall on a malformed hooks.json reports failure and leaves the file untouched", async () => {
     const hooksPath = join(tmpHome, ".cursor", "hooks.json");
     writeFileSync(hooksPath, "{ not json");
     const { uninstallCursor } = await importInstaller();
-    uninstallCursor();
+    expect(() => uninstallCursor()).toThrow(/not valid JSON/);
     expect(readFileSync(hooksPath, "utf-8")).toBe("{ not json");
   });
 
