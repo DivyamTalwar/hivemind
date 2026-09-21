@@ -138,6 +138,22 @@ async function withQueueLock<T>(fn: () => T): Promise<T> {
   }
 }
 
+/**
+ * Remove exactly the queue items observed by a drain, retaining notifications
+ * appended after that snapshot. The read/filter/write is locked so a producer
+ * cannot be lost between the drain's read and its final write.
+ */
+export async function removeQueuedNotifications(consumed: Notification[]): Promise<void> {
+  await withQueueLock(() => {
+    const remaining = readQueue().queue;
+    for (const item of consumed) {
+      const index = remaining.findIndex(candidate => JSON.stringify(candidate) === JSON.stringify(item));
+      if (index !== -1) remaining.splice(index, 1);
+    }
+    writeQueue({ queue: remaining });
+  });
+}
+
 function sameDedupKey(a: Notification, b: Notification): boolean {
   if (a.id !== b.id) return false;
   // JSON.stringify is canonical enough here — dedupKey values come from

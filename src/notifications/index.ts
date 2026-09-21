@@ -17,7 +17,7 @@ import type { Credentials } from "../commands/auth-creds.js";
 import type { Agent, Notification, NotificationContext } from "./types.js";
 import type { LocalManifestEntry } from "../skillify/local-manifest.js";
 import { evaluateRules } from "./rules/registry.js";
-import { readQueue, writeQueue } from "./queue.js";
+import { readQueue, removeQueuedNotifications } from "./queue.js";
 import { readState, writeState, alreadyShown, markShown, tryClaim, releaseClaim } from "./state.js";
 import { emit } from "./delivery/index.js";
 import { fetchBackendNotifications } from "./sources/backend.js";
@@ -176,7 +176,7 @@ export async function drainSessionStart(opts: DrainOptions): Promise<void> {
     const fresh = all.filter(n => !alreadyShown(state, n));
     if (fresh.length === 0) {
       // Still drain queue items that were already shown so they don't pile up.
-      if (queue.queue.length > 0) writeQueue({ queue: [] });
+      if (queue.queue.length > 0) await removeQueuedNotifications(queue.queue);
       return;
     }
 
@@ -185,7 +185,7 @@ export async function drainSessionStart(opts: DrainOptions): Promise<void> {
     // from emitting the same notification twice. See state.ts:tryClaim.
     const claimed = fresh.filter(n => tryClaim(n));
     if (claimed.length === 0) {
-      if (queue.queue.length > 0) writeQueue({ queue: [] });
+      if (queue.queue.length > 0) await removeQueuedNotifications(queue.queue);
       log(`all ${fresh.length} notification(s) claimed by another process`);
       return;
     }
@@ -211,7 +211,7 @@ export async function drainSessionStart(opts: DrainOptions): Promise<void> {
 
     // Queue is fully drained whether or not its items were dedup-skipped:
     // they've been read once. If a producer needs to re-enqueue, it re-pushes.
-    if (queue.queue.length > 0) writeQueue({ queue: [] });
+    if (queue.queue.length > 0) await removeQueuedNotifications(queue.queue);
 
     log(`delivered ${claimed.length} notification(s) to ${opts.agent}`);
   } catch (e: any) {
