@@ -174,6 +174,10 @@ const RETRYABLE_CODES = new Set([429, 500, 502, 503, 504]);
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500;
 const MAX_CONCURRENCY = 5;
+const DEFAULT_QUERY_TIMEOUT_MS = 10_000;
+// Node's timers use a signed 32-bit delay. AbortSignal.timeout() accepts a
+// larger unsigned range, but values above this overflow to a 1ms timer.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 // Lazy read: the openclaw bundle replaces `process.env.HIVEMIND_QUERY_TIMEOUT_MS`
 // with a `globalThis.__hivemind_tuning__?.HIVEMIND_QUERY_TIMEOUT_MS` lookup via
@@ -182,7 +186,12 @@ const MAX_CONCURRENCY = 5;
 // Was previously `const QUERY_TIMEOUT_MS = …` at module top — that would have
 // frozen the value to 10000 for the openclaw bundle regardless of pluginConfig.
 function getQueryTimeoutMs(): number {
-  return Number(process.env.HIVEMIND_QUERY_TIMEOUT_MS ?? 10_000);
+  const configured = process.env.HIVEMIND_QUERY_TIMEOUT_MS;
+  if (configured === undefined) return DEFAULT_QUERY_TIMEOUT_MS;
+
+  const parsed = Number(configured);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_QUERY_TIMEOUT_MS;
+  return Math.min(Math.trunc(parsed), MAX_TIMER_DELAY_MS);
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
