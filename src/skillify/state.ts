@@ -58,6 +58,25 @@ function lockPath(projectKey: string): string {
   return join(getStateDir(), `${projectKey}.lock`);
 }
 
+function liveLockOwner(path: string): number | null {
+  try {
+    const pid = Number.parseInt(readFileSync(path, "utf-8").trim().split(/\s+/)[0] ?? "", 10);
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    try {
+      process.kill(pid, 0);
+      return pid;
+    } catch (e: any) {
+      // EPERM means the process exists but this process cannot inspect it.
+      // Only ESRCH proves that the recorded owner is gone.
+      return e?.code === "ESRCH" ? null : pid;
+    }
+  } catch {
+    // Empty/legacy lock files have no ownership metadata; the existing age
+    // based recovery remains available for those files.
+    return null;
+  }
+}
+
 export function readState(projectKey: string): SkillifyState | null {
   // Workers call readState() first to find the session watermark. Without
   // migration here, a post-rename run sees an empty `skillify/` dir while
@@ -90,13 +109,26 @@ export function withRmwLock<T>(projectKey: string, fn: () => T): T {
   let fd: number | null = null;
   while (fd === null) {
     try {
-      fd = openSync(rmw, "wx");
+      const opened = openSync(rmw, "wx");
+      try {
+        writeSync(opened, `${process.pid}\n`);
+      } catch (e) {
+        closeSync(opened);
+        try { unlinkSync(rmw); } catch { /* best effort */ }
+        throw e;
+      }
+      fd = opened;
     } catch (e: any) {
       if (e.code !== "EEXIST") throw e;
       if (Date.now() > deadline) {
         dlog(`rmw lock deadline exceeded for ${projectKey}, reclaiming stale lock`);
+        const owner = liveLockOwner(rmw);
+        if (owner !== null) {
+          throw new Error(`timed out acquiring RMW lock for ${projectKey}; owner ${owner} is still running`);
+        }
         try { unlinkSync(rmw); } catch (unlinkErr: any) {
           dlog(`stale rmw lock unlink failed for ${projectKey}: ${unlinkErr.message}`);
+          throw new Error(`timed out acquiring RMW lock for ${projectKey}; stale lock could not be reclaimed`);
         }
         continue;
       }

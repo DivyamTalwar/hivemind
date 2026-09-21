@@ -9,6 +9,7 @@ import {
   bumpStopCounter,
   resetCounter,
   readState,
+  withRmwLock,
   recordSkill,
   advanceWatermark,
   tryAcquireWorkerLock,
@@ -377,6 +378,50 @@ describe("worker lock edge cases", () => {
     expect(fs.existsSync(path)).toBe(true);
     expect(fs.readFileSync(path, "utf-8")).toBe(before);
     releaseWorkerLock(key);
+  });
+
+  it("does not reclaim an expired RMW lock whose recorded owner is still alive", () => {
+    const fs = require("node:fs");
+    const cwd = freshCwd();
+    const { key } = deriveProjectKey(cwd);
+    track(key);
+    const path = join(STATE_DIR, `${key}.lock.rmw`);
+    fs.writeFileSync(path, `${process.pid}\n`);
+
+    const now = vi.spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValue(3_000);
+    try {
+      expect(() => withRmwLock(key, () => undefined)).toThrow(/owner.*alive|still running/i);
+    } finally {
+      now.mockRestore();
+      fs.rmSync(path, { force: true });
+    }
+  });
+
+  it("fails closed when an expired RMW lock cannot be reclaimed", () => {
+    const fs = require("node:fs");
+    const cwd = freshCwd();
+    const { key } = deriveProjectKey(cwd);
+    track(key);
+    const path = join(STATE_DIR, `${key}.lock.rmw`);
+    fs.mkdirSync(path, { recursive: true });
+    fs.writeFileSync(join(path, "preserve.txt"), "do not delete");
+
+    let calls = 0;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => {
+      calls++;
+      if (calls === 1) return 0;
+      if (calls === 2) return 3_000;
+      throw new Error("unbounded retry");
+    });
+    try {
+      expect(() => withRmwLock(key, () => undefined)).toThrow(/could not be reclaimed/i);
+      expect(calls).toBe(2);
+      expect(fs.readFileSync(join(path, "preserve.txt"), "utf-8")).toBe("do not delete");
+    } finally {
+      now.mockRestore();
+    }
   });
 });
 
