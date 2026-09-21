@@ -14,20 +14,32 @@ jobs:
       max-parallel: 4
       matrix:
         include:
-          - label: cowork-partial-transcript-record
-            ref: 655e40559e6d1822f4a8a1342050bb8ea7424755
-          - label: query-semaphore-abort
-            ref: 265c4dd6fbafeeb72df77125e856a01045a6fc41
-          - label: cowork-summary-after-upload
-            ref: 48fc1d4699f9722978895217981e670f32fb5f98
-          - label: graph-docs-project-scope
-            ref: 560e92c213db9614d15015c4479da5c75779d994
-          - label: graph-docs-pull-context
-            ref: b2058002594a6fffc8b5f455bc5dcf33c35af735
-          - label: graph-javascript-cross-file-calls
-            ref: c4147d607b5a58bc765e1237c64532719290ccd4
-          - label: graph-pull-preserve-sidecarless
-            ref: 8eef5347d63d0ce1d89f0206d33e24a81cd393dd
+          - label: graph-docs-set-pull-identity
+            ref: ab093cb7858096a44f827385f97e3df5f2919149
+          - label: cli-preserve-malformed-config
+            ref: e7b2026f7f3f2557db95e96f0f191238578117af
+          - label: cli-hermes-hook-path-quoting
+            ref: a8c3f00634bc8576f6a86dd84acbb87415587919
+          - label: cli-install-failure-status
+            ref: 2bbf0d70cac410de8698d01ef769c7e796be57e4
+          - label: cli-pi-legacy-skill-ownership
+            ref: 8219a5410d49bfb8e64b86824321dbc4af1d39e7
+          - label: skillify-pick-global-quota
+            ref: 1f3d9fe6354e96b417811660cf7a168fe57d0434
+          - label: skillify-local-manifest-atomic
+            ref: 660b21ee79fbe87cfb91876010d11013d1bc2280
+          - label: skillify-autopull-cancellation
+            ref: aa16ece550062ef4907d0e27d8e5824b5928afb3
+          - label: skillify-rmw-lock-bounded
+            ref: fa0cb09bfcba8647d0695b5e6501026c628075ce
+          - label: skillify-pull-manifest-repair
+            ref: bf0a02c8af9d44e07289f2edefd24309134b46cd
+          - label: runtime-table-fetch-deadline
+            ref: 69aa5b96ddf6e5726e405df728a52992e42a0009
+          - label: runtime-notification-drain-race
+            ref: 3cfa06390dc9b0cf57600b119ed0b9f053b77e26
+          - label: private-doc-owner-access
+            ref: 65bb4cf37c9190a84084a77f7637672d1411a324
     steps:
       - uses: actions/checkout@v6.0.2
         with:
