@@ -16,6 +16,7 @@ import {
   writePullManifest,
   GITIGNORE_ENTRIES,
 } from "../../src/docs/pull.js";
+import { setDoc } from "../../src/docs/write.js";
 
 const P = "0f992ca17378e7ca";
 
@@ -65,6 +66,35 @@ describe("pullDocs", () => {
     expect(calls[0]).not.toMatch(/\bscope\b/);
     expect(report.cursor).toBe("2026-07-08T11:00:00Z");
     expect(readPullManifest(dir).cursor).toBe("2026-07-08T11:00:00Z");
+  });
+
+  it("round-trips a manually set doc through composite-id pull selection", async () => {
+    let insertedId = "";
+    const writeQuery = vi.fn(async (sql: string) => {
+      if (sql.startsWith("INSERT")) insertedId = sql.match(/VALUES \('([^']+)'/)?.[1] ?? "";
+      return [];
+    });
+    await setDoc(writeQuery, "hivemind_docs", {
+      doc_id: "src/manual.ts",
+      path: "/docs/p/src/manual.ts.md",
+      content: "# Manual doc",
+      project: P,
+    }, { project: P });
+
+    const stored = {
+      id: insertedId,
+      doc_id: "src/manual.ts",
+      content: "# Manual doc",
+      status: "active",
+      updated_at: "2026-07-08T12:00:00Z",
+    };
+    const query = vi.fn(async (sql: string) =>
+      insertedId.startsWith(`${P}|main|`) && sql.includes(`id LIKE '${P}|main|%'`) ? [stored] : [],
+    );
+    const report = await pullDocs({ query, tableName: "hivemind_docs", repoRoot: dir, project: P });
+
+    expect(report.written).toEqual(["src/manual.ts.hivemind.md"]);
+    expect(readFileSync(join(dir, "src/manual.ts.hivemind.md"), "utf-8")).toBe("# Manual doc\n");
   });
 
   it("delta protocol: the cursor bounds the next read; --force ignores it", async () => {

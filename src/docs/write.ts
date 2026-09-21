@@ -19,7 +19,6 @@
  *   - `created_at` is immutable; only `updated_at` advances.
  */
 
-import { randomUUID } from "node:crypto";
 import { sqlIdent, sqlStr } from "../utils/sql.js";
 import { embeddingSqlLiteral } from "../embeddings/sql.js";
 import type { DocAnchor, DocRow, DocTier, QueryFn } from "./read.js";
@@ -143,7 +142,7 @@ export async function insertDoc(
   assertValidContent(input.content);
   if (input.doc_id.length === 0) throw new Error("Doc doc_id must not be empty");
   const safe = sqlIdent(tableName);
-  const rowId = randomUUID();
+  const rowId = docRowId(input.project, input.scope, input.doc_id);
   const now = new Date().toISOString();
   const anchors = serializeAnchors(input.anchors ?? []);
   const tier: DocTier = input.tier ?? "fast";
