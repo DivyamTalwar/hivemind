@@ -8,40 +8,58 @@ permissions:
   contents: read
 
 jobs:
-  baseline:
+  private-doc-permissions:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
+    env:
+      CANDIDATE: 677e122f085a24c51056e3ae117679b9c2372624
+      BASELINE: ce30de7ca94115cb73fa991538c6d2595ac2622a
     steps:
       - uses: actions/checkout@v6.0.2
         with:
+          ref: 677e122f085a24c51056e3ae117679b9c2372624
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v6.4.0
         with:
           node-version: 22
+          cache: npm
       - name: Install dependencies
         run: npm ci
         env:
           HUSKY: '0'
-      - name: Build baseline
-        run: npm run build
-      - name: Archive test dependencies and emitted bundles
+      - name: Prove regressions fail against the unmodified baseline
+        shell: bash
         run: |
-          du -sh node_modules
-          python3 - <<'PY'
-          import pathlib, subprocess
-          roots = [pathlib.Path('node_modules'), pathlib.Path('bundle'), pathlib.Path('dist')]
-          roots += list(pathlib.Path('harnesses').glob('*/bundle'))
-          roots += list(pathlib.Path('harnesses').glob('*/dist'))
-          roots += [pathlib.Path('mcp/bundle')]
-          args = ['tar', '-czf', '/tmp/hivemind-audit-runtime.tar.gz']
-          args += [str(p) for p in roots if p.exists()]
-          subprocess.run(args, check=True)
-          PY
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: hivemind-audit-runtime
-          path: /tmp/hivemind-audit-runtime.tar.gz
-          compression-level: 0
-          retention-days: 1
-      - name: Run baseline tests
+          git checkout "$BASELINE" -- src/docs/private-store.ts
+          trap 'git checkout "$CANDIDATE" -- src/docs/private-store.ts' EXIT
+          set +e
+          npx vitest run tests/shared/docs-private-permissions.test.ts --pool=forks --reporter=json --outputFile=/tmp/baseline-regression.json
+          status=$?
+          set -e
+          test "$status" -ne 0
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const report = JSON.parse(fs.readFileSync('/tmp/baseline-regression.json', 'utf8'));
+          const tests = report.testResults.flatMap(suite => suite.assertionResults);
+          assert.equal(tests.length, 3, 'All regression tests must execute');
+          assert.ok(tests.every(test => test.status === 'failed'), 'Failure must come from the three regressions');
+          for (const test of tests) console.log('BASELINE FAILURE:', test.fullName, test.failureMessages.join('\n'));
+          JS
+      - name: Verify candidate regressions and existing private-store tests
+        run: npx vitest run tests/shared/docs-private-permissions.test.ts tests/shared/docs-private-store.test.ts --pool=forks
+      - name: Build candidate
+        run: npm run build
+      - name: Duplication guard
+        run: npm run dup
+      - name: Full candidate suite with coverage
         run: npx vitest run --coverage
+      - name: Validate patch whitespace
+        run: git diff "$BASELINE" "$CANDIDATE" --check
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: private-doc-baseline-regression
+          path: /tmp/baseline-regression.json
+          retention-days: 3
