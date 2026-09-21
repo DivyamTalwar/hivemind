@@ -7,9 +7,11 @@
  *   - file doc   `src/foo.ts`        → `src/foo.ts.hivemind.md`
  *
  * Delta protocol: a local manifest (`.hivemind/docs-pull.json`, gitignored)
- * stores an `updated_at` cursor per (project, scope) pull context. Each pull
- * reads only rows with `updated_at > cursor` for that context — O(changed
- * docs), not O(corpus). Rows are targeted by their composite id prefix
+ * stores an `updated_at` cursor per (project, scope) pull context. A cursor is
+ * reused only while that context remains materialized; switching contexts
+ * re-reads the view because their docs share physical local paths. Same-view
+ * pulls read only rows with `updated_at >= cursor` — O(changed docs), not
+ * O(corpus). Rows are targeted by their composite id prefix
  * (`<project>|<scope>|`) so the read never selects the `scope` column and
  * works on tables that predate it.
  *
@@ -38,6 +40,8 @@ export interface PullManifest {
   cursor: string;
   /** Max `updated_at` already materialized, keyed by project and scope. */
   contexts?: Record<string, string>;
+  /** Context whose view currently owns the shared local materialization. */
+  activeContext?: string;
 }
 
 /** Stable manifest key for one project's branch/scope view. */
@@ -72,6 +76,7 @@ export function readPullManifest(repoRoot: string): PullManifest {
     return {
       cursor: typeof raw?.cursor === "string" ? raw.cursor : "",
       ...(Object.keys(contexts).length > 0 ? { contexts } : {}),
+      ...(typeof raw?.activeContext === "string" ? { activeContext: raw.activeContext } : {}),
     };
   } catch {
     return { cursor: "" };
@@ -135,7 +140,10 @@ export async function pullDocs(args: PullArgs): Promise<PullReport> {
   // A pre-context manifest has no reliable project/scope ownership. Ignore
   // its single cursor once, then persist an isolated cursor for this view.
   const contextCursor = manifest.contexts?.[contextKey] ?? "";
-  const cursor = args.force ? "" : contextCursor;
+  // A context cursor is valid only while its view still owns the shared local
+  // paths. Missing/ambiguous active metadata deliberately falls back to a full
+  // read so legacy or downgraded manifests cannot lose older documents.
+  const cursor = args.force || manifest.activeContext !== contextKey ? "" : contextCursor;
 
   const safe = sqlIdent(args.tableName);
   const idPrefix = docRowId(args.project, scope, "");
@@ -204,6 +212,7 @@ export async function pullDocs(args: PullArgs): Promise<PullReport> {
   writePullManifest(args.repoRoot, {
     cursor: maxSeen,
     contexts: { ...(manifest.contexts ?? {}), [contextKey]: maxSeen },
+    activeContext: contextKey,
   });
   return { written, removed, unchanged, cursor: maxSeen };
 }
