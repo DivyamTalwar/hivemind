@@ -119,12 +119,15 @@ describe("installHermes — cold install", () => {
     expect(cfg.preserved_field).toBe("stay");
   });
 
-  it("re-install over a malformed config.yaml does not throw and lands a fresh entry", async () => {
+  it("refuses a malformed config.yaml without overwriting it or touching payloads", async () => {
     mkdirSync(join(tmpHome, ".hermes"), { recursive: true });
-    writeFileSync(join(tmpHome, ".hermes", "config.yaml"), "::: not yaml :::");
+    const configPath = join(tmpHome, ".hermes", "config.yaml");
+    writeFileSync(configPath, "::: not yaml :::");
     const { installHermes } = await importInstaller();
-    expect(() => installHermes()).not.toThrow();
-    expect(readConfig().mcp_servers.hivemind).toBeDefined();
+    expect(() => installHermes()).toThrow(/not valid YAML/);
+    expect(readFileSync(configPath, "utf-8")).toBe("::: not yaml :::");
+    expect(existsSync(join(tmpHome, ".hermes", "hivemind"))).toBe(false);
+    expect(existsSync(join(tmpHome, ".hivemind", "mcp"))).toBe(false);
   });
 
   it("re-install replaces stale hivemind hooks (no duplication after N re-runs)", async () => {

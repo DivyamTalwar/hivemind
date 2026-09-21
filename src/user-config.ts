@@ -31,6 +31,7 @@ let _configPath: () => string = () =>
 // cache only avoids re-parsing JSON on every call.
 let _cache: UserConfig | null = null;
 let _migrated = false;
+let _configMalformed = false;
 
 export function readUserConfig(): UserConfig {
   if (_cache !== null) return _cache;
@@ -42,17 +43,31 @@ export function readUserConfig(): UserConfig {
   try {
     const raw = readFileSync(path, "utf-8");
     const parsed = JSON.parse(raw) as unknown;
-    _cache = isPlainObject(parsed) ? (parsed as UserConfig) : {};
+    if (!isPlainObject(parsed)) {
+      _configMalformed = true;
+      _cache = {};
+    } else {
+      _configMalformed = false;
+      _cache = parsed as UserConfig;
+    }
   } catch {
-    // Corrupt or unreadable — treat as empty, but DON'T overwrite (the user
-    // may want to fix it by hand). A subsequent write will overwrite.
+    // Corrupt or unreadable — treat as empty for read-only callers, but mark
+    // the file so a migration or preference write cannot overwrite data the
+    // user may want to repair by hand.
+    _configMalformed = true;
     _cache = {};
   }
   return _cache;
 }
 
 export function writeUserConfig(patch: Partial<UserConfig>): UserConfig {
+  if (_configMalformed) {
+    throw new Error(`Hivemind user config at ${_configPath()} is not valid JSON; fix or remove it, then rerun.`);
+  }
   const current = readUserConfig();
+  if (_configMalformed) {
+    throw new Error(`Hivemind user config at ${_configPath()} is not valid JSON; fix or remove it, then rerun.`);
+  }
   const merged = deepMerge(current, patch);
   const path = _configPath();
   const dir = dirname(path);
@@ -147,6 +162,7 @@ export function _setConfigPathForTesting(fn: () => string): void {
   _configPath = fn;
   _cache = null;
   _migrated = false;
+  _configMalformed = false;
 }
 
 export function _resetUserConfigForTesting(): void {
@@ -154,4 +170,5 @@ export function _resetUserConfigForTesting(): void {
     process.env.HIVEMIND_CONFIG_PATH ?? join(homedir(), ".deeplake", "config.json");
   _cache = null;
   _migrated = false;
+  _configMalformed = false;
 }

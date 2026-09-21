@@ -60,6 +60,15 @@ describe("readUserConfig", () => {
     expect(readUserConfig()).toEqual({});
   });
 
+  it("does not overwrite malformed JSON when embeddings migration runs", () => {
+    const original = "{ not json";
+    writeFileSync(configPath, original, "utf-8");
+    _resetUserConfigForTesting();
+    _setConfigPathForTesting(() => configPath);
+    expect(getEmbeddingsEnabled()).toBe(false);
+    expect(readFileSync(configPath, "utf-8")).toBe(original);
+  });
+
   it("caches the parsed config across calls (single file read per process)", () => {
     writeFileSync(configPath, JSON.stringify({ embeddings: { enabled: false } }), "utf-8");
     _resetUserConfigForTesting();
@@ -168,5 +177,14 @@ describe("getEmbeddingsEnabled — migration from HIVEMIND_EMBEDDINGS", () => {
     expect(getEmbeddingsEnabled()).toBe(true);
     const written = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(written).toEqual({ embeddings: { enabled: true } });
+  });
+
+  it("refuses explicit writes over malformed config", () => {
+    const original = "{ not json";
+    writeFileSync(configPath, original, "utf-8");
+    _resetUserConfigForTesting();
+    _setConfigPathForTesting(() => configPath);
+    expect(() => setEmbeddingsEnabled(true)).toThrow(/not valid JSON/);
+    expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 });

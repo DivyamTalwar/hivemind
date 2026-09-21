@@ -168,11 +168,9 @@ function readConfig(): HermesConfig {
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as HermesConfig;
     }
-    return {};
+    throw new Error("root value is not a YAML object");
   } catch {
-    // Malformed YAML — back off to empty so we don't clobber, but the user
-    // will see our entry get appended fresh.
-    return {};
+    throw new Error(`Hermes config at ${CONFIG_PATH} is not valid YAML; fix or remove it, then rerun.`);
   }
 }
 
@@ -200,6 +198,10 @@ function packagedSkillNames(): string[] {
 }
 
 export function installHermes(): void {
+  // Validate before touching any owned payload directories. Treating a
+  // malformed config as empty would destroy every user setting on write.
+  const cfg = readConfig();
+
   // 1. Skills — agent context. hivemind-memory is written inline; everything
   //    else the installer ever put in that dir (an older version's
   //    templates/) is pruned so only the current skill body remains.
@@ -238,7 +240,6 @@ export function installHermes(): void {
 
   // Update config.yaml with mcp_servers + hooks + hooks_auto_accept.
   // Preserves any pre-existing user configuration.
-  const cfg = readConfig();
   if (!cfg.mcp_servers || typeof cfg.mcp_servers !== "object") cfg.mcp_servers = {};
   cfg.mcp_servers[SERVER_KEY] = {
     command: "node",
@@ -266,7 +267,13 @@ export function uninstallHermes(): void {
   }
 
   if (existsSync(CONFIG_PATH)) {
-    const cfg = readConfig();
+    let cfg: HermesConfig;
+    try {
+      cfg = readConfig();
+    } catch (err) {
+      warn(`  Hermes         leaving malformed config untouched: ${(err as Error).message}`);
+      return;
+    }
     let touched = false;
     if (cfg.mcp_servers && typeof cfg.mcp_servers === "object" && SERVER_KEY in cfg.mcp_servers) {
       delete cfg.mcp_servers[SERVER_KEY];

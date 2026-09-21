@@ -266,12 +266,13 @@ describe("installCodex — happy path", () => {
     expect(hooks.version).toBe(7);
   });
 
-  it("re-install over a malformed hooks.json does not throw and writes a fresh one", async () => {
-    writeFileSync(join(tmpHome, ".codex", "hooks.json"), "{ not json");
+  it("refuses a malformed hooks.json without overwriting it or touching payloads", async () => {
+    const hooksPath = join(tmpHome, ".codex", "hooks.json");
+    writeFileSync(hooksPath, "{ not json");
     const { installCodex } = await importInstaller();
-    expect(() => installCodex()).not.toThrow();
-    const hooks = JSON.parse(readFileSync(join(tmpHome, ".codex", "hooks.json"), "utf-8"));
-    expect(hooks.hooks.SessionStart).toBeDefined();
+    expect(() => installCodex()).toThrow(/not valid JSON/);
+    expect(readFileSync(hooksPath, "utf-8")).toBe("{ not json");
+    expect(existsSync(join(tmpHome, ".codex", "hivemind"))).toBe(false);
   });
 
   it("warns and skips the symlink (without throwing) when the skill source is missing", async () => {
@@ -493,14 +494,11 @@ describe("uninstallCodex", () => {
     expect(after.hooks.SessionStart ?? []).toHaveLength(0);
   });
 
-  it("uninstall on a malformed hooks.json deletes the file rather than crashing", async () => {
-    // Lock the catch path inside uninstallCodex that handles unparseable
-    // JSON: we'd rather drop the file than guess at intent (the user can
-    // re-install cleanly).
+  it("uninstall on a malformed hooks.json leaves the file untouched", async () => {
     const { uninstallCodex } = await importInstaller();
     const hooksPath = join(tmpHome, ".codex", "hooks.json");
     writeFileSync(hooksPath, "{ this is not valid json");
     expect(() => uninstallCodex()).not.toThrow();
-    expect(existsSync(hooksPath)).toBe(false);
+    expect(readFileSync(hooksPath, "utf-8")).toBe("{ this is not valid json");
   });
 });
