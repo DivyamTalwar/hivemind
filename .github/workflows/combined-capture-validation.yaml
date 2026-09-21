@@ -1,0 +1,44 @@
+name: Combined capture recovery validation
+on:
+  push:
+    branches: [audit/combined-capture-validation-20260922]
+permissions:
+  contents: read
+jobs:
+  combined:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: 75b015c80a67bba0e22083bf2aebcf70c1470de2
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compose the independently tested commits without changing either branch
+        run: |
+          git config user.name 'Divyam Talwar'
+          git config user.email '194859478+DivyamTalwar@users.noreply.github.com'
+          git cherry-pick 728aa7de466e51ba05174eb5ec7e92576456a48b
+          git log -3 --oneline
+          git diff ce30de7ca94115cb73fa991538c6d2595ac2622a...HEAD --check
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+      - name: Install build and duplication check
+        env:
+          HUSKY: '0'
+        run: |
+          npm ci > /tmp/combined-install.log 2>&1 || { tail -80 /tmp/combined-install.log; exit 1; }
+          npm run typecheck
+          npm run dup > /tmp/combined-dup.log 2>&1 || { tail -80 /tmp/combined-dup.log; exit 1; }
+          npm run audit:openclaw -- --criticals-only
+      - name: Full combined test suite and coverage
+        run: |
+          npx vitest run --coverage > /tmp/combined-tests.log 2>&1 || { tail -120 /tmp/combined-tests.log; exit 1; }
+          grep -E 'Test Files|Tests |Coverage summary|Statements|Branches|Functions|Lines ' /tmp/combined-tests.log
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: combined-capture-evidence
+          path: /tmp/combined-*.log
+          retention-days: 7
