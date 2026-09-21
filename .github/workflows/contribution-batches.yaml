@@ -1,0 +1,100 @@
+name: Contribution regression gates
+
+on:
+  push:
+    branches: [audit/validation-20260922]
+    paths:
+      - '.contribution-audit/**'
+      - '.github/workflows/contribution-batches.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.specs.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: specs
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { execFileSync } from 'node:child_process';
+          const dir = '.contribution-audit/fixes';
+          const all = fs.readdirSync(dir).filter(name => name.endsWith('.json')).map(name => path.join(dir, name));
+          let changed = [];
+          try { changed = execFileSync('git', ['diff', '--name-only', process.env.BEFORE, process.env.GITHUB_SHA], {encoding:'utf8'}).trim().split('\n'); } catch {}
+          const infrastructure = changed.some(file => file === '.contribution-audit/run.mjs' || file === '.github/workflows/contribution-batches.yaml');
+          const selected = infrastructure || changed.length === 0 ? all : all.filter(file => changed.includes(file));
+          const matrix = selected.map(file => { const spec = JSON.parse(fs.readFileSync(file, 'utf8')); return {id:spec.id, base:spec.base}; });
+          if (matrix.length === 0) throw new Error('No changed contribution specifications');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\n`);
+          JS
+  validate:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      HUSKY: '0'
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          path: audit
+          persist-credentials: false
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ matrix.base }}
+          path: work
+          persist-credentials: false
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: work/package-lock.json
+      - name: Install baseline dependencies
+        working-directory: work
+        run: npm ci
+      - name: Prove regression and validate candidate
+        id: validate
+        working-directory: work
+        run: node ../audit/.contribution-audit/run.mjs ../audit/.contribution-audit/fixes/${{ matrix.id }}.json
+      - name: Publish validated branch without overwriting existing work
+        working-directory: work
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.validate.outputs.branch }}
+        shell: bash
+        run: |
+          repo=https://github.com/DivyamTalwar/hivemind.git
+          remote_sha=$(git ls-remote "$repo" "refs/heads/$BRANCH" | cut -f1)
+          if [ -n "$remote_sha" ]; then
+            git fetch --no-tags --depth=1 "$repo" "$BRANCH"
+            test "$(git rev-parse 'FETCH_HEAD^{tree}')" = "$(git rev-parse 'HEAD^{tree}')" || { echo 'Existing branch differs; refusing to overwrite it'; exit 1; }
+            echo "CONTRIBUTION_PUBLISHED=$BRANCH $remote_sha (identical validated tree already present)"
+          else
+            auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" git push "$repo" "HEAD:refs/heads/$BRANCH"
+            echo "CONTRIBUTION_PUBLISHED=$BRANCH $(git rev-parse HEAD)"
+          fi
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: ${{ matrix.id }}-validation-evidence
+          path: |
+            ${{ runner.temp }}/${{ matrix.id }}-*.json
+            ${{ runner.temp }}/${{ matrix.id }}-*.log
+          retention-days: 3
