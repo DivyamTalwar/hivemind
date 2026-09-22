@@ -14,10 +14,8 @@ jobs:
       max-parallel: 4
       matrix:
         include:
-          - label: graph-docs-set-pull-identity
-            ref: 4a7d1f540dde64bc90c1c37af56f288599b0505d
-          - label: skillify-rmw-lock-bounded
-            ref: 61ff88d3304231e2c710400749c2b4221f0f01da
+          - label: graph-js-var-loop-followup
+            ref: 7f2e2c0d5afe44b178a1252ff03e60aba6367ee6
     steps:
       - uses: actions/checkout@v6.0.2
         with:
