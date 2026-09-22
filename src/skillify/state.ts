@@ -97,8 +97,9 @@ function sameObservedLock(path: string, observed: LockObservation): boolean {
 function lockOwner(observed: LockObservation): LockOwner {
   // Accept PID-only markers written by the first ownership-aware release and
   // PID + UUID markers written by this release. Anything else is unknown.
-  const match = /^([1-9]\d*)(?: [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})?(?:\r?\n)?$/i
-    .exec(observed.marker);
+  const match = observed.marker.match(
+    /^([1-9]\d*)(?: [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})?(?:\r?\n)?$/i,
+  );
   if (!match) return { state: "unknown" };
   const pid = Number(match[1]);
   if (!Number.isSafeInteger(pid)) return { state: "unknown" };
