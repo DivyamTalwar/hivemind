@@ -1,7 +1,7 @@
 name: Campaign isolated contribution gates
 on:
   push:
-    branches: [audit/pr-professional-hivemind-20260923]
+    branches: [audit/maintainer-followup-20260923]
 permissions:
   contents: read
 jobs:
@@ -11,11 +11,11 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 2
       matrix:
         include:
-          - label: deadline-blank-configuration
-            ref: 77bd6dfc69fdf28c28783c2be2faea65be228e57
+          - label: snapshot-validation-review
+            ref: 04f9de7c3ad01acfc5e13ccef6f9526cc6cedcf1
     steps:
       - uses: actions/checkout@v6.0.2
         with:
