@@ -256,7 +256,7 @@ describe("pullSnapshot — outcome resolution", () => {
     mkdirSync(join(baseDir, "snapshots"), { recursive: true });
     writeFileSync(snapshotPath, canonicalSnapshot(localSnapshot));
     writeLastBuild(baseDir, {
-      ts: 2_000_000_000_000,  // year 2033 in epoch ms
+      ts: Date.parse("2026-06-04T00:00:00.000Z"), // valid sidecar, newer than cloud
       commit_sha: "head1234abcd",
       snapshot_sha256: computeSnapshotSha256(localSnapshot),
       node_count: 1,
@@ -282,7 +282,7 @@ describe("pullSnapshot — outcome resolution", () => {
     expect(result.kind).toBe("local-newer");
     if (result.kind === "local-newer") {
       expect(result.commitSha).toBe("head1234abcd");
-      expect(result.localTs).toBe(2_000_000_000_000);
+      expect(result.localTs).toBe(Date.parse("2026-06-04T00:00:00.000Z"));
       expect(result.cloudTs).toBeLessThan(result.localTs);
     }
     // No snapshot content was overwritten.
@@ -432,6 +432,72 @@ describe("pullSnapshot — outcome resolution", () => {
 
     expect(result.kind).toBe("pulled");
     expect(readFileSync(snapshotPath, "utf8")).toBe(CLOUD_PAYLOAD);
+  });
+
+  it("does not let a matching future sidecar block a newer cloud snapshot", async () => {
+    const cloud: GraphSnapshot = {
+      ...FIXTURE_SNAPSHOT,
+      graph: { ...FIXTURE_SNAPSHOT.graph, repo_key: deriveProjectKey(tmpCwd).key },
+    };
+    const local: GraphSnapshot = {
+      ...cloud,
+      observation: { ...cloud.observation, ts: "2026-06-01T00:00:00.000Z" },
+      nodes: [{ ...cloud.nodes[0]!, label: "older-local" }],
+    };
+    const snapshotPath = join(baseDir, "snapshots", "head1234abcd.json");
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(snapshotPath, canonicalSnapshot(local));
+    writeLastBuild(baseDir, {
+      ts: Date.now() + 60_000,
+      commit_sha: "head1234abcd",
+      snapshot_sha256: computeSnapshotSha256(local),
+      node_count: 1, edge_count: 0,
+    }, worktreeIdFromCwd(tmpCwd));
+    const payload = canonicalSnapshot(cloud);
+    const { api } = makeMockApi({ selectReturns: [{
+      snapshot_jsonb: payload, snapshot_sha256: computeSnapshotSha256(cloud),
+      ts: cloud.observation.ts, node_count: 1, edge_count: 0,
+    }] });
+
+    const result = await pullSnapshot(tmpCwd, {
+      loadConfig: makeConfig, readHead: () => "head1234abcd", makeApi: () => api,
+    });
+
+    expect(result.kind).toBe("pulled");
+    expect(readFileSync(snapshotPath, "utf8")).toBe(payload);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["incomplete", {}],
+  ])("repairs a %s observation despite matching snapshot and sidecar hashes", async (_label, observation) => {
+    const cloud: GraphSnapshot = {
+      ...FIXTURE_SNAPSHOT,
+      graph: { ...FIXTURE_SNAPSHOT.graph, repo_key: deriveProjectKey(tmpCwd).key },
+    };
+    const malformed = { ...cloud, observation };
+    const snapshotPath = join(baseDir, "snapshots", "head1234abcd.json");
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(snapshotPath, JSON.stringify(malformed));
+    writeLastBuild(baseDir, {
+      ts: Date.parse(cloud.observation.ts),
+      commit_sha: "head1234abcd",
+      snapshot_sha256: computeSnapshotSha256(cloud),
+      node_count: 1, edge_count: 0,
+    }, worktreeIdFromCwd(tmpCwd));
+    const payload = canonicalSnapshot(cloud);
+    const { api } = makeMockApi({ selectReturns: [{
+      snapshot_jsonb: payload, snapshot_sha256: computeSnapshotSha256(cloud),
+      ts: cloud.observation.ts, node_count: 1, edge_count: 0,
+    }] });
+
+    const result = await pullSnapshot(tmpCwd, {
+      loadConfig: makeConfig, readHead: () => "head1234abcd", makeApi: () => api,
+    });
+
+    expect(result.kind).toBe("pulled");
+    expect(readFileSync(snapshotPath, "utf8")).toBe(payload);
   });
 
   it("reconciles a stale inconsistent sidecar before comparing a newer local snapshot", async () => {

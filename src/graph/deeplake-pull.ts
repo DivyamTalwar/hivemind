@@ -349,14 +349,11 @@ function readLocalSnapshotState(
     const parsed = JSON.parse(readFileSync(snapshotPath, "utf8")) as unknown;
     if (!isCompatibleLocalSnapshot(parsed, head, repoKey)) return null;
     const snapshot = parsed as GraphSnapshot;
-    let ts = 0;
-    if (snapshot.observation !== undefined) {
-      ts = parseTs(snapshot.observation.ts);
-      // A future observation is not freshness evidence. Local graph files are
-      // not authenticated, so an impossible clock value must fail closed and
-      // let the cloud repair the snapshot rather than protecting it.
-      if (!Number.isFinite(ts) || ts <= 0 || ts > Date.now()) return null;
-    }
+    const ts = parseTs(snapshot.observation.ts);
+    // A future observation is not freshness evidence. Local graph files are
+    // not authenticated, so an impossible clock value must fail closed and
+    // let the cloud repair the snapshot rather than protecting it.
+    if (!Number.isFinite(ts) || ts <= 0 || ts > Date.now()) return null;
     return {
       ts,
       commit_sha: head,
@@ -382,13 +379,15 @@ function reconcileLocalSnapshotState(
   if (
     sidecar === null ||
     sidecar.commit_sha !== snapshot.commit_sha ||
-    sidecar.snapshot_sha256 !== snapshot.snapshot_sha256
+    sidecar.snapshot_sha256 !== snapshot.snapshot_sha256 ||
+    sidecar.ts > Date.now()
   ) {
     return snapshot;
   }
   return { ...snapshot, ts: Math.max(snapshot.ts, sidecar.ts) };
 }
 
+/** Validate local identity and required metadata before a no-write freshness decision. */
 function isCompatibleLocalSnapshot(raw: unknown, head: string, repoKey: string): raw is GraphSnapshot {
   if (raw === null || typeof raw !== "object") return false;
   const snapshot = raw as Record<string, unknown>;
@@ -403,21 +402,18 @@ function isCompatibleLocalSnapshot(raw: unknown, head: string, repoKey: string):
   if (metadata.commit_sha !== head) return false;
   if (metadata.repo_key !== repoKey) return false;
 
-  // Observation is intentionally not an identity key: repo_project and
-  // worktree_path legitimately differ across checkouts of one remote. When
-  // present, however, validate the fields and types emitted by graph builds;
-  // do not treat an arbitrary observation object as freshness proof.
-  if (snapshot.observation !== undefined) {
-    const observation = snapshot.observation;
-    if (observation === null || typeof observation !== "object") return false;
-    const o = observation as Record<string, unknown>;
-    if (typeof o.ts !== "string") return false;
-    if (o.branch !== null && typeof o.branch !== "string") return false;
-    if (typeof o.worktree_path !== "string") return false;
-    if (typeof o.repo_project !== "string") return false;
-    if (typeof o.generator_version !== "string") return false;
-    if (!finiteNonNegative(o.source_files_extracted) || !finiteNonNegative(o.source_files_skipped)) return false;
-  }
+  // Observation is required even though the stable-field hash excludes it.
+  // Its fields are shape checks, not identity keys: repo_project and
+  // worktree_path legitimately differ across checkouts of one remote.
+  const observation = snapshot.observation;
+  if (observation === null || typeof observation !== "object") return false;
+  const o = observation as Record<string, unknown>;
+  if (typeof o.ts !== "string") return false;
+  if (o.branch !== null && typeof o.branch !== "string") return false;
+  if (typeof o.worktree_path !== "string") return false;
+  if (typeof o.repo_project !== "string") return false;
+  if (typeof o.generator_version !== "string") return false;
+  if (!finiteNonNegative(o.source_files_extracted) || !finiteNonNegative(o.source_files_skipped)) return false;
   return true;
 }
 
