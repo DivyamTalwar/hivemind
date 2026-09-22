@@ -453,8 +453,8 @@ describe("setDoc", () => {
     }, { project: "old-proj" });
     const update = calls.find((call) => call.startsWith("UPDATE"))!;
     const assignments = update.match(/^UPDATE .* SET (.*) WHERE /s)![1];
-    expect(assignments).toContain("'new-proj'");
-    expect(assignments).not.toContain("'old-proj'");
+    expect(assignments).toMatch(/(?:^|, )project = 'new-proj'(?:,|$)/);
+    expect(assignments).not.toMatch(/(?:^|, )project = 'old-proj'(?:,|$)/);
   });
 
   it("UPDATEs the existing row in place (bumping version), never a second row", async () => {

@@ -372,6 +372,10 @@ export async function setDoc(
   };
   const previous = await getDocLatest(query, tableName, input.doc_id, identity);
   if (!previous) {
+    const project = input.project ?? identity.project;
+    if (project !== identity.project) {
+      await assertEmptyMoveDestination(query, tableName, input.doc_id, project, identity.scope);
+    }
     return insertDoc(query, tableName, {
       doc_id: input.doc_id,
       path: input.path,
@@ -423,6 +427,25 @@ export async function archiveDoc(
 }
 
 /**
+ * Reject project moves into an occupied identity before any write. Version
+ * counters belong to separate project histories, so even an older or archived
+ * destination is a conflict, not an automatically disposable duplicate.
+ * This read is not a transaction with the subsequent write.
+ */
+async function assertEmptyMoveDestination(
+  query: QueryFn,
+  tableName: string,
+  docId: string,
+  project: string,
+  scope: string,
+): Promise<void> {
+  const destination = await getDocLatest(query, tableName, docId, { project, scope });
+  if (destination !== null) {
+    throw new Error(`Cannot move document ${docId}: destination project ${project} already contains this document in scope ${scope}`);
+  }
+}
+
+/**
  * Update a doc IN PLACE — one row per `doc_id`, mutated with a single UPDATE.
  *
  * This replaced the old INSERT-only version-append once the Deeplake backend's
@@ -456,14 +479,14 @@ async function updateInPlace(
   const canonicalId = docRowId(project, scope, previous.doc_id);
   const reconcileIdentity = previous.id !== canonicalId;
 
-  // Remove every OTHER row for the selected identity even when the canonical
-  // row won the latest-version read. That makes cleanup symmetric: both
-  // legacy-newer and canonical-newer duplicate orderings converge to one row.
-  // A deliberate project move may also have a stale target row, so include the
-  // explicitly requested destination project but never any unrelated project.
-  const projects = [...new Set([identity.project, project])]
-    .map((value) => `'${sqlStr(value)}'`)
-    .join(", ");
+  if (project !== identity.project) {
+    await assertEmptyMoveDestination(query, tableName, previous.doc_id, project, scope);
+  }
+
+  // Remove only source-identity duplicates, never destination rows. A project
+  // move must not delete destination data even if it arrives after the check.
+  // Same-project canonical/UUID reconciliation retains its existing policy.
+  const projects = `'${sqlStr(identity.project)}'`;
   await query(
     `DELETE FROM "${safe}" WHERE id <> '${sqlStr(previous.id)}' ` +
       `AND doc_id = '${sqlStr(previous.doc_id)}' AND scope = '${sqlStr(scope)}' ` +

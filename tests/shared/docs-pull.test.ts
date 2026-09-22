@@ -16,7 +16,7 @@ import {
   writePullManifest,
   GITIGNORE_ENTRIES,
 } from "../../src/docs/pull.js";
-import { archiveDoc, setDoc } from "../../src/docs/write.js";
+import { archiveDoc, editDoc, setDoc } from "../../src/docs/write.js";
 
 const P = "0f992ca17378e7ca";
 
@@ -168,6 +168,89 @@ function storedRow(overrides: Partial<FakeDocRow> = {}): FakeDocRow {
     ...overrides,
   } as FakeDocRow;
 }
+
+describe("document project-move conflicts", () => {
+  it.each([
+    ["edit", 1], ["edit", 5], ["edit", 9],
+    ["set", 1], ["set", 5], ["set", 9],
+  ])("rejects %s when the destination exists at version %s without mutating either project", async (operation, version) => {
+    const source = storedRow({ id: "legacy-source", version: 5, content: "# Source" });
+    const destination = storedRow({ id: "target|main|src/manual.ts", project: "target", version, content: "# Destination" });
+    const sourceDuplicate = storedRow({ id: `${P}|main|src/manual.ts`, version: 4 });
+    const backend = makeDocsBackend([source, destination, sourceDuplicate]);
+    const before = structuredClone(backend.rows);
+    const input = { doc_id: "src/manual.ts", project: "target", content: "# Moved", path: "/docs/target/src/manual.ts.md" };
+
+    await expect(operation === "edit"
+      ? editDoc(backend.query, "hivemind_docs", input, { project: P })
+      : setDoc(backend.query, "hivemind_docs", input, { project: P }))
+      .rejects.toThrow(/destination.*already contains/i);
+
+    expect(backend.rows).toEqual(before);
+    expect(backend.calls.every((sql) => sql.startsWith("SELECT"))).toBe(true);
+    expect(backend.calls.at(-1)).toContain("AND project = 'target' AND scope = 'main'");
+  });
+
+  it("preserves an archived destination instead of silently replacing its history", async () => {
+    const backend = makeDocsBackend([
+      storedRow({ version: 5 }),
+      storedRow({ id: "target|main|src/manual.ts", project: "target", status: "archived", version: 1 }),
+    ]);
+    const before = structuredClone(backend.rows);
+    await expect(editDoc(backend.query, "hivemind_docs", {
+      doc_id: "src/manual.ts", project: "target",
+    }, { project: P })).rejects.toThrow(/destination.*already contains/i);
+    expect(backend.rows).toEqual(before);
+    expect(backend.calls.every((sql) => sql.startsWith("SELECT"))).toBe(true);
+  });
+
+  it("does not bypass the destination check when a set selector finds no source", async () => {
+    const backend = makeDocsBackend([
+      storedRow({ id: "target|main|src/manual.ts", project: "target", version: 9 }),
+    ]);
+    const before = structuredClone(backend.rows);
+    await expect(setDoc(backend.query, "hivemind_docs", {
+      doc_id: "src/manual.ts", project: "target", content: "# New", path: "/docs/target/manual.md",
+    }, { project: P })).rejects.toThrow(/destination.*already contains/i);
+    expect(backend.rows).toEqual(before);
+    expect(backend.calls.every((sql) => sql.startsWith("SELECT"))).toBe(true);
+  });
+
+  it("propagates destination lookup failure before any mutation", async () => {
+    const backend = makeDocsBackend([storedRow({ version: 5 })]);
+    const before = structuredClone(backend.rows);
+    const underlying = backend.query.getMockImplementation()!;
+    const failure = new Error("destination lookup unavailable");
+    backend.query.mockImplementation(async (sql) => {
+      if (sql.startsWith("SELECT") && sql.includes("AND project = 'target'")) throw failure;
+      return underlying(sql);
+    });
+    await expect(editDoc(backend.query, "hivemind_docs", {
+      doc_id: "src/manual.ts", project: "target",
+    }, { project: P })).rejects.toBe(failure);
+    expect(backend.rows).toEqual(before);
+    expect(backend.calls.every((sql) => sql.startsWith("SELECT"))).toBe(true);
+  });
+
+  it("moves to an empty destination scope while preserving other projects and scopes", async () => {
+    const source = storedRow({ id: "legacy-source", scope: "b:feature", version: 5 });
+    const otherScope = storedRow({ id: "target|main|src/manual.ts", project: "target", version: 99 });
+    const otherProject = storedRow({ id: "other|b:feature|src/manual.ts", project: "other", scope: "b:feature", version: 99 });
+    const backend = makeDocsBackend([source, otherScope, otherProject]);
+    const result = await editDoc(backend.query, "hivemind_docs", {
+      doc_id: "src/manual.ts", project: "target",
+    }, { project: P, scope: "b:feature" });
+    expect(result).toEqual({ doc_id: "src/manual.ts", version: 6 });
+    expect(backend.rows.find((row) => row.id === "target|b:feature|src/manual.ts")).toMatchObject({
+      project: "target", scope: "b:feature", version: 6,
+      content: source.content, created_at: source.created_at,
+    });
+    expect(backend.rows.find((row) => row.id === otherScope.id)).toEqual(otherScope);
+    expect(backend.rows.find((row) => row.id === otherProject.id)).toEqual(otherProject);
+    expect(backend.calls.find((sql) => sql.startsWith("DELETE"))).toContain(`project IN ('${P}')`);
+    expect(backend.calls.find((sql) => sql.startsWith("DELETE"))).not.toContain("'target'");
+  });
+});
 
 describe("localDocPath", () => {
   it("wiki pages and file docs materialize in DISTINCT namespaces (no collision)", () => {
