@@ -39,6 +39,9 @@ afterEach(() => {
 
 describe("DeeplakeApi table discovery timeout", () => {
   it.each([
+    ["empty", "", 10_000],
+    ["spaces", "   ", 10_000],
+    ["blank whitespace", "\t\r\n", 10_000],
     ["non-numeric", "abc", 10_000],
     ["negative", "-1", 10_000],
     ["fractional", "12.75", 12],

@@ -187,7 +187,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 // frozen the value to 10000 for the openclaw bundle regardless of pluginConfig.
 function getQueryTimeoutMs(): number {
   const configured = process.env.HIVEMIND_QUERY_TIMEOUT_MS;
-  if (configured === undefined) return DEFAULT_QUERY_TIMEOUT_MS;
+  if (configured === undefined || String(configured).trim() === "") return DEFAULT_QUERY_TIMEOUT_MS;
 
   const parsed = Number(configured);
   if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_QUERY_TIMEOUT_MS;
