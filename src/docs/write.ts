@@ -331,15 +331,18 @@ export async function editDoc(
   // to write) — in a shared org table an unscoped read can resolve the same
   // doc_id to another project's row, or (with branch overlays) to a sibling
   // scope's row. Passing scope confines the edit to one identity.
-  const identity: SelectedWriteIdentity = {
-    project: opts.project ?? "",
-    scope: opts.scope ?? "main",
-  };
-  const previous = await getDocLatest(query, tableName, input.doc_id, identity);
+  const scope = opts.scope ?? "main";
+  // An omitted project remains an optional selector, not a request for legacy
+  // project-empty rows. Guard subsequent writes with the resolved storage
+  // identity; callers requiring repository scoping must supply that selector.
+  const previous = await getDocLatest(query, tableName, input.doc_id, {
+    project: opts.project,
+    scope,
+  });
   if (!previous) {
     throw new Error(`Doc not found: ${input.doc_id}`);
   }
-  return updateInPlace(query, tableName, previous, input, identity);
+  return updateInPlace(query, tableName, previous, input, { project: previous.project, scope });
 }
 
 /**
