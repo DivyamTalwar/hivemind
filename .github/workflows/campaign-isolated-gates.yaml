@@ -14,8 +14,8 @@ jobs:
       max-parallel: 4
       matrix:
         include:
-          - label: config-validation-followup
-            ref: a061e94c8f22989955e6f736145b77f6f98de502
+          - label: docs-archive-selector-compatibility
+            ref: 1eb310c773d700ceb05bdf2216feefdf4e6aafa0
     steps:
       - uses: actions/checkout@v6.0.2
         with:
