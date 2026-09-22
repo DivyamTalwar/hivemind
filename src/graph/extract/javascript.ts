@@ -475,6 +475,13 @@ function switchHasLexicalBinding(body: TSNode, name: string): boolean {
 function subtreeHasVarBinding(node: TSNode, name: string): boolean {
   if (node.type === "variable_declaration" && declarationHasName(node, name)) return true;
 
+  // tree-sitter stores for-in/of declarations directly on the loop instead of
+  // wrapping them in a variable_declaration. `var` still binds the function.
+  if (node.type === "for_in_statement" && node.childForFieldName("kind")?.text === "var") {
+    const pattern = node.childForFieldName("left");
+    if (pattern !== null && bindingPatternHasName(pattern, name)) return true;
+  }
+
   for (let i = 0; i < node.namedChildCount; i++) {
     const child = node.namedChild(i);
     if (child === null || isFunctionScope(child) || child.type === "class_declaration" ||
