@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -16,7 +16,7 @@ import {
   writePullManifest,
   GITIGNORE_ENTRIES,
 } from "../../src/docs/pull.js";
-import { setDoc } from "../../src/docs/write.js";
+import { archiveDoc, setDoc } from "../../src/docs/write.js";
 
 const P = "0f992ca17378e7ca";
 
@@ -29,6 +29,134 @@ function makeQuery(rows: Array<Record<string, unknown>>) {
 const row = (doc_id: string, content: string, updated_at: string, status = "active") => ({
   id: `${P}|main|${doc_id}`, doc_id, content, status, updated_at,
 });
+
+type FakeDocRow = Record<string, unknown> & {
+  id: string;
+  doc_id: string;
+  project: string;
+  scope: string;
+};
+
+function sqlValue(token: string): unknown {
+  const value = token.trim();
+  const quoted = value.match(/^(?:E)?'((?:''|[^'])*)'$/s);
+  if (quoted) return quoted[1].replace(/''/g, "'").replace(/\\\\/g, "\\");
+  if (value === "NULL") return null;
+  if (/^-?\d+$/.test(value)) return Number(value);
+  return value;
+}
+
+function splitSqlList(value: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  let quoted = false;
+  let bracketDepth = 0;
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === "'" && quoted && value[i + 1] === "'") {
+      i++;
+      continue;
+    }
+    if (value[i] === "'") quoted = !quoted;
+    else if (!quoted && value[i] === "[") bracketDepth++;
+    else if (!quoted && value[i] === "]") bracketDepth--;
+    else if (!quoted && bracketDepth === 0 && value[i] === ",") {
+      out.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(value.slice(start));
+  return out;
+}
+
+/**
+ * Small stateful SQL boundary fake for write -> read -> pull lifecycle tests.
+ * It applies the identity filters from the generated SQL rather than returning
+ * scripted rows regardless of the query, which is what hid the routing bugs.
+ */
+function makeDocsBackend(initial: FakeDocRow[] = []) {
+  const rows = initial.map((item) => ({ ...item }));
+  const calls: string[] = [];
+  const query = vi.fn(async (sql: string) => {
+    calls.push(sql);
+
+    if (sql.startsWith("SELECT")) {
+      let selected = rows;
+      const docId = sql.match(/doc_id = '([^']+)'/)?.[1];
+      const project = sql.match(/(?:^| AND )project = '([^']*)'/)?.[1];
+      const scope = sql.match(/(?:^| AND )scope = '([^']+)'/)?.[1];
+      const prefix = sql.match(/id LIKE '([^']*)%'/)?.[1];
+      if (docId !== undefined) selected = selected.filter((item) => item.doc_id === docId);
+      if (project !== undefined) selected = selected.filter((item) => item.project === project);
+      if (scope !== undefined) selected = selected.filter((item) => item.scope === scope);
+      if (prefix !== undefined) selected = selected.filter((item) => item.id.startsWith(prefix));
+      return selected.map((item) => ({ ...item }));
+    }
+
+    if (sql.startsWith("INSERT")) {
+      const match = sql.match(/INSERT INTO "[^"]+" \(([^)]+)\) VALUES \((.*)\)$/s);
+      if (!match) throw new Error(`Unsupported INSERT: ${sql}`);
+      const columns = match[1].split(",").map((column) => column.trim());
+      const values = splitSqlList(match[2]).map(sqlValue);
+      rows.push(Object.fromEntries(columns.map((column, index) => [column, values[index]])) as FakeDocRow);
+      return [];
+    }
+
+    if (sql.startsWith("DELETE")) {
+      const keepId = sql.match(/id <> '([^']+)'/)?.[1];
+      const docId = sql.match(/doc_id = '([^']+)'/)?.[1];
+      const scope = sql.match(/scope = '([^']+)'/)?.[1];
+      const projectList = sql.match(/project IN \(([^)]+)\)/)?.[1];
+      if (keepId === undefined || docId === undefined || scope === undefined || projectList === undefined) {
+        throw new Error(`Unsupported DELETE: ${sql}`);
+      }
+      const projects = new Set(splitSqlList(projectList).map((value) => String(sqlValue(value))));
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const item = rows[i];
+        if (item.id !== keepId && item.doc_id === docId && item.scope === scope && projects.has(item.project)) {
+          rows.splice(i, 1);
+        }
+      }
+      return [];
+    }
+
+    if (sql.startsWith("UPDATE")) {
+      const match = sql.match(/UPDATE "[^"]+" SET (.*) WHERE id = '([^']+)'$/s);
+      if (!match) throw new Error(`Unsupported UPDATE: ${sql}`);
+      const item = rows.find((candidate) => candidate.id === match[2]);
+      if (!item) return [];
+      for (const assignment of splitSqlList(match[1])) {
+        const field = assignment.trim().match(/^([a-z_]+) = (.*)$/s);
+        if (field) item[field[1]] = sqlValue(field[2]);
+      }
+      return [];
+    }
+
+    throw new Error(`Unsupported SQL: ${sql}`);
+  });
+  return { calls, query, rows };
+}
+
+function storedRow(overrides: Partial<FakeDocRow> = {}): FakeDocRow {
+  return {
+    id: `${P}|main|src/manual.ts`,
+    doc_id: "src/manual.ts",
+    path: "/docs/p/src/manual.ts.md",
+    content: "# Before",
+    anchors: "[]",
+    tier: "fast",
+    status: "active",
+    project: P,
+    scope: "main",
+    source_fp: "{}",
+    version: 1,
+    created_at: "2026-07-08T10:00:00.000Z",
+    updated_at: "2026-07-08T10:00:00.000Z",
+    agent: "manual",
+    plugin_version: "",
+    content_embedding: null,
+    ...overrides,
+  } as FakeDocRow;
+}
 
 describe("localDocPath", () => {
   it("wiki pages and file docs materialize in DISTINCT namespaces (no collision)", () => {
@@ -69,32 +197,136 @@ describe("pullDocs", () => {
   });
 
   it("round-trips a manually set doc through composite-id pull selection", async () => {
-    let insertedId = "";
-    const writeQuery = vi.fn(async (sql: string) => {
-      if (sql.startsWith("INSERT")) insertedId = sql.match(/VALUES \('([^']+)'/)?.[1] ?? "";
-      return [];
-    });
-    await setDoc(writeQuery, "hivemind_docs", {
+    const backend = makeDocsBackend();
+    await setDoc(backend.query, "hivemind_docs", {
       doc_id: "src/manual.ts",
       path: "/docs/p/src/manual.ts.md",
       content: "# Manual doc",
       project: P,
     }, { project: P });
-
-    const stored = {
-      id: insertedId,
-      doc_id: "src/manual.ts",
-      content: "# Manual doc",
-      status: "active",
-      updated_at: "2026-07-08T12:00:00Z",
-    };
-    const query = vi.fn(async (sql: string) =>
-      insertedId.startsWith(`${P}|main|`) && sql.includes(`id LIKE '${P}|main|%'`) ? [stored] : [],
-    );
-    const report = await pullDocs({ query, tableName: "hivemind_docs", repoRoot: dir, project: P });
+    const report = await pullDocs({ query: backend.query, tableName: "hivemind_docs", repoRoot: dir, project: P });
 
     expect(report.written).toEqual(["src/manual.ts.hivemind.md"]);
     expect(readFileSync(join(dir, "src/manual.ts.hivemind.md"), "utf-8")).toBe("# Manual doc\n");
+  });
+
+  it("routes a new branch doc through the selected project and scope", async () => {
+    const backend = makeDocsBackend();
+    await setDoc(backend.query, "hivemind_docs", {
+      doc_id: "src/branch.ts",
+      path: "/docs/p/src/branch.ts.md",
+      content: "# Branch doc",
+    }, { project: P, scope: "b:feature" });
+
+    const report = await pullDocs({
+      query: backend.query,
+      tableName: "hivemind_docs",
+      repoRoot: dir,
+      project: P,
+      scope: "b:feature",
+    });
+
+    expect(backend.rows).toHaveLength(1);
+    expect(backend.rows[0]).toMatchObject({
+      id: `${P}|b:feature|src/branch.ts`,
+      project: P,
+      scope: "b:feature",
+    });
+    expect(report.written).toEqual(["src/branch.ts.hivemind.md"]);
+  });
+
+  it("reconciles a UUID-backed active row and duplicate into one pull-visible identity", async () => {
+    const backend = makeDocsBackend([
+      storedRow({ id: "legacy-uuid", version: 4, content: "# Legacy" }),
+      storedRow({ version: 3, content: "# Stale deterministic duplicate" }),
+    ]);
+
+    const result = await setDoc(backend.query, "hivemind_docs", {
+      doc_id: "src/manual.ts",
+      path: "/docs/p/src/manual.ts.md",
+      content: "# Reconciled",
+      project: P,
+    }, { project: P, scope: "main" });
+    const report = await pullDocs({ query: backend.query, tableName: "hivemind_docs", repoRoot: dir, project: P });
+
+    expect(result.version).toBe(5);
+    expect(backend.rows).toHaveLength(1);
+    expect(backend.rows[0]).toMatchObject({
+      id: `${P}|main|src/manual.ts`,
+      content: "# Reconciled",
+      status: "active",
+      version: 5,
+      created_at: "2026-07-08T10:00:00.000Z",
+    });
+    expect(report.written).toEqual(["src/manual.ts.hivemind.md"]);
+    expect(readFileSync(join(dir, "src/manual.ts.hivemind.md"), "utf-8")).toBe("# Reconciled\n");
+  });
+
+  it("reconciles a UUID-backed row when archiving so pull removes the local doc", async () => {
+    const localPath = join(dir, "src", "manual.ts.hivemind.md");
+    const backend = makeDocsBackend([storedRow({ id: "legacy-uuid", version: 7 })]);
+    await pullDocs({ query: backend.query, tableName: "hivemind_docs", repoRoot: dir, project: P });
+    expect(existsSync(localPath)).toBe(false); // UUID rows are invisible until reconciled.
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(localPath, "# Before\n", { flag: "w" });
+
+    const result = await archiveDoc(
+      backend.query,
+      "hivemind_docs",
+      { doc_id: "src/manual.ts" },
+      { project: P, scope: "main" },
+    );
+    const report = await pullDocs({
+      query: backend.query,
+      tableName: "hivemind_docs",
+      repoRoot: dir,
+      project: P,
+      force: true,
+    });
+
+    expect(result.version).toBe(8);
+    expect(backend.rows).toHaveLength(1);
+    expect(backend.rows[0]).toMatchObject({
+      id: `${P}|main|src/manual.ts`,
+      status: "archived",
+      version: 8,
+    });
+    expect(report.removed).toEqual(["src/manual.ts.hivemind.md"]);
+    expect(existsSync(localPath)).toBe(false);
+  });
+
+  it("keeps a UUID-backed archived row archived while reconciling it for pull", async () => {
+    const localPath = join(dir, "src", "manual.ts.hivemind.md");
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(localPath, "# Old local copy\n");
+    const backend = makeDocsBackend([
+      storedRow({ id: "legacy-archived-uuid", status: "archived", version: 9 }),
+    ]);
+
+    const result = await setDoc(backend.query, "hivemind_docs", {
+      doc_id: "src/manual.ts",
+      path: "/docs/p/src/manual.ts.md",
+      content: "# Updated archive record",
+      project: P,
+    }, { project: P, scope: "main" });
+    const report = await pullDocs({
+      query: backend.query,
+      tableName: "hivemind_docs",
+      repoRoot: dir,
+      project: P,
+      force: true,
+    });
+
+    expect(result.version).toBe(10);
+    expect(backend.rows).toHaveLength(1);
+    expect(backend.rows[0]).toMatchObject({
+      id: `${P}|main|src/manual.ts`,
+      status: "archived",
+      content: "# Updated archive record",
+      version: 10,
+    });
+    expect(report.removed).toEqual(["src/manual.ts.hivemind.md"]);
+    expect(existsSync(localPath)).toBe(false);
   });
 
   it("delta protocol: the cursor bounds the next read; --force ignores it", async () => {

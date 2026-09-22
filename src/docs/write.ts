@@ -108,6 +108,11 @@ export interface WriteResult {
   version: number;
 }
 
+interface WriteIdentity {
+  project?: string;
+  scope?: string;
+}
+
 const MAX_CONTENT_LENGTH = 50_000;
 
 /**
@@ -315,7 +320,7 @@ export async function editDoc(
   query: QueryFn,
   tableName: string,
   input: EditDocInput,
-  opts: { project?: string; scope?: string } = {},
+  opts: WriteIdentity = {},
 ): Promise<WriteResult> {
   // Optional project + scope SELECTOR (distinct from input.project, the value
   // to write) — in a shared org table an unscoped read can resolve the same
@@ -325,7 +330,7 @@ export async function editDoc(
   if (!previous) {
     throw new Error(`Doc not found: ${input.doc_id}`);
   }
-  return updateInPlace(query, tableName, previous, input);
+  return updateInPlace(query, tableName, previous, input, opts);
 }
 
 /**
@@ -342,7 +347,7 @@ export async function setDoc(
   query: QueryFn,
   tableName: string,
   input: SetDocInput,
-  opts: { project?: string; scope?: string } = {},
+  opts: WriteIdentity = {},
 ): Promise<WriteResult> {
   // Project + scope SELECTOR (shared-table safety): without it the bare doc_id
   // can resolve to another project's row — or a sibling branch overlay — and
@@ -355,7 +360,11 @@ export async function setDoc(
       content: input.content,
       anchors: input.anchors,
       tier: input.tier,
-      project: input.project,
+      // The selector is also the insertion route when the caller omitted a
+      // redundant project value. Scope lives only in the write options, so it
+      // must be forwarded explicitly or branch rows silently land in main.
+      project: input.project ?? opts.project,
+      scope: opts.scope,
       agent: input.agent,
       plugin_version: input.plugin_version,
       content_embedding: input.content_embedding,
@@ -372,7 +381,7 @@ export async function setDoc(
     agent: input.agent,
     plugin_version: input.plugin_version,
     content_embedding: input.content_embedding,
-  });
+  }, opts);
 }
 
 /**
@@ -385,7 +394,7 @@ export async function archiveDoc(
   query: QueryFn,
   tableName: string,
   input: { doc_id: string; agent?: string; plugin_version?: string },
-  opts: { project?: string; scope?: string } = {},
+  opts: WriteIdentity = {},
 ): Promise<WriteResult> {
   return editDoc(query, tableName, {
     doc_id: input.doc_id,
@@ -413,6 +422,7 @@ async function updateInPlace(
   tableName: string,
   previous: DocRow,
   next: EditDocInput,
+  identity: WriteIdentity,
 ): Promise<WriteResult> {
   const content = next.content ?? previous.content;
   assertValidContent(content);
@@ -424,11 +434,36 @@ async function updateInPlace(
   const status = next.status ?? (previous.status as "active" | "archived");
   const path = next.path ?? previous.path;
   const project = next.project ?? previous.project;
+  const scope = identity.scope ?? previous.scope ?? "main";
+  const canonicalId = docRowId(project, scope, previous.doc_id);
+  const reconcileIdentity = previous.id !== canonicalId;
+
+  if (reconcileIdentity) {
+    // UUID-era rows are invisible to pull's `<project>|<scope>|` prefix. Before
+    // renaming the selected row, discard every OTHER row for its source/target
+    // identity at this scope. This handles a partially migrated table where a
+    // stale deterministic row already exists without leaving parallel hidden
+    // histories. The selected row survives, preserving its version and fields
+    // that this UPDATE intentionally leaves untouched (notably embeddings).
+    const projects = [...new Set([previous.project, project])]
+      .map((value) => `'${sqlStr(value)}'`)
+      .join(", ");
+    await query(
+      `DELETE FROM "${safe}" WHERE id <> '${sqlStr(previous.id)}' ` +
+        `AND doc_id = '${sqlStr(previous.doc_id)}' AND scope = '${sqlStr(scope)}' ` +
+        `AND project IN (${projects})`,
+    );
+  }
 
   // One UPDATE, all columns — the F0 safety rule. created_at + doc_id are not
-  // touched (immutable identity/creation stamp).
+  // touched (immutable identity/creation stamp). A UUID-era row also has its
+  // id/scope repaired in this same UPDATE so edit and archive immediately
+  // become visible to the pull prefix without resetting version history.
   const sql =
     `UPDATE "${safe}" SET ` +
+    `${reconcileIdentity
+      ? `id = '${sqlStr(canonicalId)}', scope = '${sqlStr(scope)}', `
+      : ""}` +
     `path = '${sqlStr(path)}', ` +
     `content = E'${sqlStr(content)}', ` +
     `anchors = E'${sqlStr(anchors)}', ` +

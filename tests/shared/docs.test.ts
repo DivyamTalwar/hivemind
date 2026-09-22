@@ -51,7 +51,7 @@ const TBL = "hivemind_docs";
  */
 function fakeRow(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
   return {
-    id: "row-uuid",
+    id: "myproj|main|src/shell/deeplake-fs.ts",
     doc_id: "src/shell/deeplake-fs.ts",
     path: "/docs/myproj/deeplake-fs.ts.md",
     content: "# deeplake-fs\n\nThe VFS.",
@@ -311,7 +311,7 @@ describe("upsertDoc", () => {
 describe("editDoc", () => {
   it("reads latest, then UPDATEs in place bumping version; created_at untouched, updated_at advances", async () => {
     const { calls, query } = mockQuery([
-      () => [fakeRow({ id: "row-1", version: 1, content: "old", created_at: "2026-05-20T10:00:00.000Z" })],
+      () => [fakeRow({ version: 1, content: "old", created_at: "2026-05-20T10:00:00.000Z" })],
       () => [],
     ]);
     const result = await editDoc(query, TBL, { doc_id: "src/shell/deeplake-fs.ts", content: "new" });
@@ -322,7 +322,7 @@ describe("editDoc", () => {
     expect(calls[1]).toMatch(/^UPDATE "hivemind_docs" SET/);
     expect(calls[1]).toContain(`E'new'`);
     expect(calls[1]).toContain("version = 2");
-    expect(calls[1]).toContain(`WHERE id = 'row-1'`);
+    expect(calls[1]).toContain(`WHERE id = 'myproj|main|src/shell/deeplake-fs.ts'`);
     // created_at is immutable → the UPDATE must NOT touch it.
     expect(calls[1]).not.toContain("created_at");
     // updated_at advances to a fresh "now" timestamp.
@@ -379,7 +379,7 @@ describe("editDoc", () => {
 // ── setDoc (idempotent upsert — the fork-history fix) ─────────────────────────
 
 describe("editDoc embedding policy (stale vectors)", () => {
-  const prevRow = () => [{ id: "r1", doc_id: "a.ts", version: 1, content: "old body", anchors: "[]", tier: "fast", status: "active", project: "p", created_at: "t", updated_at: "t" }];
+  const prevRow = () => [{ id: "p|main|a.ts", doc_id: "a.ts", version: 1, content: "old body", anchors: "[]", tier: "fast", status: "active", project: "p", created_at: "t", updated_at: "t" }];
 
   it("CONTENT change without a fresh vector NULLs the embedding (reindex heals missing, never stale)", async () => {
     const { calls, query } = mockQuery([prevRow, () => []]);
@@ -433,13 +433,14 @@ describe("setDoc", () => {
       content: "updated",
       project: "new-proj",
     });
-    expect(calls[1]).toContain("'new-proj'");
-    expect(calls[1]).not.toContain("'old-proj'");
+    const update = calls.find((call) => call.startsWith("UPDATE"))!;
+    expect(update).toContain("'new-proj'");
+    expect(update).not.toContain("'old-proj'");
   });
 
   it("UPDATEs the existing row in place (bumping version), never a second row", async () => {
     const { calls, query } = mockQuery([
-      () => [fakeRow({ id: "row-9", doc_id: "src/a.ts", version: 4, created_at: "2026-01-01T00:00:00.000Z" })],
+      () => [fakeRow({ id: "p|main|src/a.ts", doc_id: "src/a.ts", version: 4, project: "p", created_at: "2026-01-01T00:00:00.000Z" })],
       () => [],
     ]);
     const result = await setDoc(query, TBL, {
@@ -454,7 +455,7 @@ describe("setDoc", () => {
     expect(calls[1]).toMatch(/^UPDATE "hivemind_docs" SET/);
     expect(calls[1]).not.toMatch(/^INSERT/);
     expect(calls[1]).toContain("version = 5");
-    expect(calls[1]).toContain(`WHERE id = 'row-9'`);
+    expect(calls[1]).toContain(`WHERE id = 'p|main|src/a.ts'`);
     // created_at is immutable → not part of the UPDATE.
     expect(calls[1]).not.toContain("created_at");
     expect(calls[1]).toContain(`E'updated'`);
@@ -466,7 +467,7 @@ describe("setDoc", () => {
 describe("archiveDoc", () => {
   it("appends a version with status='archived', preserving content", async () => {
     const { calls, query } = mockQuery([
-      () => [fakeRow({ doc_id: "src/gone.ts", version: 2, content: "keep me" })],
+      () => [fakeRow({ id: "myproj|main|src/gone.ts", doc_id: "src/gone.ts", version: 2, content: "keep me" })],
       () => [],
     ]);
     const result = await archiveDoc(query, TBL, { doc_id: "src/gone.ts" });
