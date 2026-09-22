@@ -171,53 +171,26 @@ function readConfig(): HermesConfig | null {
   }
 
   let parsed: unknown;
+  let rootNodeIsEmpty = true;
   try {
-    parsed = yaml.load(raw);
+    parsed = yaml.load(raw, {
+      // js-yaml represents both an empty document and an explicit null scalar
+      // as null. The final parser close event retains the root node metadata,
+      // so use it to distinguish those cases without reimplementing YAML.
+      listener: (event, state) => {
+        if (event !== "close") return;
+        const node = state as typeof state & { tag?: string | null; anchor?: string | null };
+        rootNodeIsEmpty = node.kind == null && node.tag == null && node.anchor == null;
+      },
+    });
   } catch {
     throw new Error(`Hermes config at ${CONFIG_PATH} is not valid YAML; fix or remove it, then rerun.`);
   }
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
     return parsed as HermesConfig;
   }
-  if ((parsed === undefined || parsed === null) && isEmptyYamlDocument(raw)) return {};
+  if ((parsed === undefined || parsed === null) && rootNodeIsEmpty) return {};
   throw new Error(`Hermes config at ${CONFIG_PATH} must contain a YAML mapping; fix or remove it, then rerun.`);
-}
-
-function isEmptyYamlDocument(raw: string): boolean {
-  const lines = raw.replace(/^\uFEFF/, "").split(/\r?\n/);
-  let sawDirective = false;
-  let sawDocumentStart = false;
-  let sawDocumentEnd = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed === "" || trimmed.startsWith("#")) continue;
-    if (isSupportedYamlDirective(trimmed)) {
-      if (sawDocumentStart || sawDocumentEnd) return false;
-      sawDirective = true;
-      continue;
-    }
-    if (/^---(?:\s+#.*)?$/.test(trimmed)) {
-      if (sawDocumentStart || sawDocumentEnd) return false;
-      sawDocumentStart = true;
-      continue;
-    }
-    if (/^\.\.\.(?:\s+#.*)?$/.test(trimmed)) {
-      if (sawDocumentEnd) return false;
-      sawDocumentEnd = true;
-      continue;
-    }
-    return false;
-  }
-  // A directive must introduce a document-start marker. A document-end marker
-  // may stand alone, while a start marker may be followed by one end marker.
-  // The successful yaml.load above remains the parser authority; this lexical
-  // check only distinguishes empty docs from explicit nulls and other roots.
-  return (!sawDirective || sawDocumentStart) && (!sawDocumentEnd || sawDocumentStart || !sawDirective);
-}
-
-function isSupportedYamlDirective(line: string): boolean {
-  return /^%YAML\s+1\.(?:1|2)(?:\s+#.*)?$/.test(line)
-    || /^%TAG\s+\S+\s+\S+(?:\s+#.*)?$/.test(line);
 }
 
 function writeConfig(cfg: HermesConfig): void {
