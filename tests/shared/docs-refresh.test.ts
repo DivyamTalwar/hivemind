@@ -167,13 +167,13 @@ describe("refreshDocs", () => {
     expect(report.refreshed).toBe(1);
     expect(report.outcomes[0]).toMatchObject({ doc_id: "a.ts", status: "refreshed", version: 4 });
     expect(generate).toHaveBeenCalledOnce();
-    // 2 queries: getDocLatest + UPDATE-in-place. The UPDATE carries the FRESH
+    // SELECT + duplicate cleanup + UPDATE-in-place. The UPDATE carries the FRESH
     // anchor (recomputed from current code), not the stale stored hash.
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toMatch(/^UPDATE "hivemind_docs" SET/);
-    expect(calls[1]).toContain("new doc body");
-    expect(calls[1]).toContain(buildAnchor(foo, dir)!.content_hash);
-    expect(calls[1]).not.toContain("stale");
+    expect(calls).toHaveLength(3);
+    const update = calls.find((call) => call.startsWith("UPDATE"))!;
+    expect(update).toContain("new doc body");
+    expect(update).toContain(buildAnchor(foo, dir)!.content_hash);
+    expect(update).not.toContain("stale");
   });
 
   it("rejects an over-budget rewrite — no write happens", async () => {
@@ -249,10 +249,9 @@ describe("refreshDocs", () => {
     expect(report.outcomes[0]).toMatchObject({ doc_id: "a.ts", status: "archived", version: 4 });
     // No token spent on a deleted file.
     expect(generate).not.toHaveBeenCalled();
-    // archiveDoc = getDocLatest + UPDATE(status='archived'); nothing else.
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toMatch(/^UPDATE "hivemind_docs" SET/);
-    expect(calls[1]).toContain("status = 'archived'");
+    // archiveDoc = SELECT + bounded duplicate cleanup + status UPDATE.
+    expect(calls).toHaveLength(3);
+    expect(calls.find((call) => call.startsWith("UPDATE"))).toContain("status = 'archived'");
   });
 
   it("drops a dangling anchor when its symbol vanished from the graph", async () => {
@@ -268,7 +267,8 @@ describe("refreshDocs", () => {
     });
     expect(report.refreshed).toBe(1);
     // The UPDATE must carry only foo's anchor, not the gone one.
-    expect(calls[1]).toContain(foo.id);
-    expect(calls[1]).not.toContain("a.ts:gone:function");
+    const update = calls.find((call) => call.startsWith("UPDATE"))!;
+    expect(update).toContain(foo.id);
+    expect(update).not.toContain("a.ts:gone:function");
   });
 });

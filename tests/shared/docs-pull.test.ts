@@ -89,7 +89,12 @@ function makeDocsBackend(initial: FakeDocRow[] = []) {
       if (project !== undefined) selected = selected.filter((item) => item.project === project);
       if (scope !== undefined) selected = selected.filter((item) => item.scope === scope);
       if (prefix !== undefined) selected = selected.filter((item) => item.id.startsWith(prefix));
-      return selected.map((item) => ({ ...item }));
+      const projection = sql.match(/^SELECT (.*?) FROM /s)?.[1]
+        .split(",")
+        .map((column) => column.trim());
+      return selected.map((item) => projection === undefined
+        ? { ...item }
+        : Object.fromEntries(projection.map((column) => [column, item[column]])));
     }
 
     if (sql.startsWith("INSERT")) {
@@ -120,9 +125,15 @@ function makeDocsBackend(initial: FakeDocRow[] = []) {
     }
 
     if (sql.startsWith("UPDATE")) {
-      const match = sql.match(/UPDATE "[^"]+" SET (.*) WHERE id = '([^']+)'$/s);
+      const match = sql.match(/UPDATE "[^"]+" SET (.*) WHERE (.*)$/s);
       if (!match) throw new Error(`Unsupported UPDATE: ${sql}`);
-      const item = rows.find((candidate) => candidate.id === match[2]);
+      const previousId = match[2].match(/id = '([^']+)'/)?.[1];
+      const selectedProject = match[2].match(/project = '([^']*)'/)?.[1];
+      const selectedScope = match[2].match(/scope = '([^']+)'/)?.[1];
+      const item = rows.find((candidate) =>
+        candidate.id === previousId &&
+        (selectedProject === undefined || candidate.project === selectedProject) &&
+        (selectedScope === undefined || candidate.scope === selectedScope));
       if (!item) return [];
       for (const assignment of splitSqlList(match[1])) {
         const field = assignment.trim().match(/^([a-z_]+) = (.*)$/s);
@@ -295,6 +306,36 @@ describe("pullDocs", () => {
     expect(existsSync(localPath)).toBe(false);
   });
 
+  it("reconciles a UUID-backed branch row using the selected scope even when reads omit scope", async () => {
+    const backend = makeDocsBackend([
+      storedRow({ id: "legacy-branch-uuid", scope: "b:feature", version: 6 }),
+    ]);
+
+    const result = await setDoc(backend.query, "hivemind_docs", {
+      doc_id: "src/manual.ts",
+      path: "/docs/p/src/manual.ts.md",
+      content: "# Branch legacy edit",
+      project: P,
+    }, { project: P, scope: "b:feature" });
+    const report = await pullDocs({
+      query: backend.query,
+      tableName: "hivemind_docs",
+      repoRoot: dir,
+      project: P,
+      scope: "b:feature",
+    });
+
+    expect(result.version).toBe(7);
+    expect(backend.rows).toHaveLength(1);
+    expect(backend.rows[0]).toMatchObject({
+      id: `${P}|b:feature|src/manual.ts`,
+      project: P,
+      scope: "b:feature",
+      version: 7,
+    });
+    expect(report.written).toEqual(["src/manual.ts.hivemind.md"]);
+  });
+
   it("keeps a UUID-backed archived row archived while reconciling it for pull", async () => {
     const localPath = join(dir, "src", "manual.ts.hivemind.md");
     mkdirSync(join(dir, "src"), { recursive: true });
@@ -327,6 +368,58 @@ describe("pullDocs", () => {
     });
     expect(report.removed).toEqual(["src/manual.ts.hivemind.md"]);
     expect(existsSync(localPath)).toBe(false);
+  });
+
+  it("keeps foreign projects and sibling scopes untouched when write options are omitted", async () => {
+    const backend = makeDocsBackend([
+      storedRow({ id: `${P}|main|src/manual.ts`, version: 2 }),
+      storedRow({ id: `foreign|main|src/manual.ts`, project: "foreign", version: 99 }),
+      storedRow({ id: `${P}|b:other|src/manual.ts`, scope: "b:other", version: 98 }),
+    ]);
+
+    const result = await setDoc(backend.query, "hivemind_docs", {
+      doc_id: "src/manual.ts",
+      path: "/docs/p/src/manual.ts.md",
+      content: "# Local main edit",
+      project: P,
+    });
+
+    expect(result.version).toBe(3);
+    expect(backend.rows).toHaveLength(3);
+    expect(backend.rows.find((item) => item.id === `${P}|main|src/manual.ts`)).toMatchObject({
+      content: "# Local main edit",
+      version: 3,
+    });
+    expect(backend.rows.find((item) => item.id === `foreign|main|src/manual.ts`)).toMatchObject({
+      project: "foreign",
+      version: 99,
+    });
+    expect(backend.rows.find((item) => item.id === `${P}|b:other|src/manual.ts`)).toMatchObject({
+      scope: "b:other",
+      version: 98,
+    });
+  });
+
+  it("removes a stale UUID duplicate when the canonical row is newer", async () => {
+    const backend = makeDocsBackend([
+      storedRow({ id: `${P}|main|src/manual.ts`, version: 5 }),
+      storedRow({ id: "legacy-uuid", version: 4 }),
+    ]);
+
+    const result = await setDoc(backend.query, "hivemind_docs", {
+      doc_id: "src/manual.ts",
+      path: "/docs/p/src/manual.ts.md",
+      content: "# Canonical wins",
+      project: P,
+    }, { project: P, scope: "main" });
+
+    expect(result.version).toBe(6);
+    expect(backend.rows).toHaveLength(1);
+    expect(backend.rows[0]).toMatchObject({
+      id: `${P}|main|src/manual.ts`,
+      content: "# Canonical wins",
+      version: 6,
+    });
   });
 
   it("delta protocol: the cursor bounds the next read; --force ignores it", async () => {

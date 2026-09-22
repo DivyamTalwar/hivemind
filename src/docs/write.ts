@@ -113,6 +113,11 @@ interface WriteIdentity {
   scope?: string;
 }
 
+interface SelectedWriteIdentity {
+  project: string;
+  scope: string;
+}
+
 const MAX_CONTENT_LENGTH = 50_000;
 
 /**
@@ -326,11 +331,15 @@ export async function editDoc(
   // to write) — in a shared org table an unscoped read can resolve the same
   // doc_id to another project's row, or (with branch overlays) to a sibling
   // scope's row. Passing scope confines the edit to one identity.
-  const previous = await getDocLatest(query, tableName, input.doc_id, { project: opts.project, scope: opts.scope });
+  const identity: SelectedWriteIdentity = {
+    project: opts.project ?? "",
+    scope: opts.scope ?? "main",
+  };
+  const previous = await getDocLatest(query, tableName, input.doc_id, identity);
   if (!previous) {
     throw new Error(`Doc not found: ${input.doc_id}`);
   }
-  return updateInPlace(query, tableName, previous, input, opts);
+  return updateInPlace(query, tableName, previous, input, identity);
 }
 
 /**
@@ -352,7 +361,13 @@ export async function setDoc(
   // Project + scope SELECTOR (shared-table safety): without it the bare doc_id
   // can resolve to another project's row — or a sibling branch overlay — and
   // this write would version-bump THAT.
-  const previous = await getDocLatest(query, tableName, input.doc_id, { project: opts.project, scope: opts.scope });
+  const identity: SelectedWriteIdentity = {
+    // `set` already carries the destination project. Reuse it as the strict
+    // selector when the caller did not repeat the same value in `opts`.
+    project: opts.project ?? input.project ?? "",
+    scope: opts.scope ?? "main",
+  };
+  const previous = await getDocLatest(query, tableName, input.doc_id, identity);
   if (!previous) {
     return insertDoc(query, tableName, {
       doc_id: input.doc_id,
@@ -363,8 +378,8 @@ export async function setDoc(
       // The selector is also the insertion route when the caller omitted a
       // redundant project value. Scope lives only in the write options, so it
       // must be forwarded explicitly or branch rows silently land in main.
-      project: input.project ?? opts.project,
-      scope: opts.scope,
+      project: input.project ?? identity.project,
+      scope: identity.scope,
       agent: input.agent,
       plugin_version: input.plugin_version,
       content_embedding: input.content_embedding,
@@ -381,7 +396,7 @@ export async function setDoc(
     agent: input.agent,
     plugin_version: input.plugin_version,
     content_embedding: input.content_embedding,
-  }, opts);
+  }, identity);
 }
 
 /**
@@ -422,7 +437,7 @@ async function updateInPlace(
   tableName: string,
   previous: DocRow,
   next: EditDocInput,
-  identity: WriteIdentity,
+  identity: SelectedWriteIdentity,
 ): Promise<WriteResult> {
   const content = next.content ?? previous.content;
   assertValidContent(content);
@@ -434,26 +449,23 @@ async function updateInPlace(
   const status = next.status ?? (previous.status as "active" | "archived");
   const path = next.path ?? previous.path;
   const project = next.project ?? previous.project;
-  const scope = identity.scope ?? previous.scope ?? "main";
+  const scope = identity.scope;
   const canonicalId = docRowId(project, scope, previous.doc_id);
   const reconcileIdentity = previous.id !== canonicalId;
 
-  if (reconcileIdentity) {
-    // UUID-era rows are invisible to pull's `<project>|<scope>|` prefix. Before
-    // renaming the selected row, discard every OTHER row for its source/target
-    // identity at this scope. This handles a partially migrated table where a
-    // stale deterministic row already exists without leaving parallel hidden
-    // histories. The selected row survives, preserving its version and fields
-    // that this UPDATE intentionally leaves untouched (notably embeddings).
-    const projects = [...new Set([previous.project, project])]
-      .map((value) => `'${sqlStr(value)}'`)
-      .join(", ");
-    await query(
-      `DELETE FROM "${safe}" WHERE id <> '${sqlStr(previous.id)}' ` +
-        `AND doc_id = '${sqlStr(previous.doc_id)}' AND scope = '${sqlStr(scope)}' ` +
-        `AND project IN (${projects})`,
-    );
-  }
+  // Remove every OTHER row for the selected identity even when the canonical
+  // row won the latest-version read. That makes cleanup symmetric: both
+  // legacy-newer and canonical-newer duplicate orderings converge to one row.
+  // A deliberate project move may also have a stale target row, so include the
+  // explicitly requested destination project but never any unrelated project.
+  const projects = [...new Set([identity.project, project])]
+    .map((value) => `'${sqlStr(value)}'`)
+    .join(", ");
+  await query(
+    `DELETE FROM "${safe}" WHERE id <> '${sqlStr(previous.id)}' ` +
+      `AND doc_id = '${sqlStr(previous.doc_id)}' AND scope = '${sqlStr(scope)}' ` +
+      `AND project IN (${projects})`,
+  );
 
   // One UPDATE, all columns — the F0 safety rule. created_at + doc_id are not
   // touched (immutable identity/creation stamp). A UUID-era row also has its
@@ -487,7 +499,8 @@ async function updateInPlace(
     `updated_at = '${sqlStr(now)}', ` +
     `agent = '${sqlStr(next.agent ?? "manual")}', ` +
     `plugin_version = '${sqlStr(next.plugin_version ?? "")}' ` +
-    `WHERE id = '${sqlStr(previous.id)}'`;
+    `WHERE id = '${sqlStr(previous.id)}' ` +
+    `AND project = '${sqlStr(identity.project)}' AND scope = '${sqlStr(scope)}'`;
   await query(sql);
   return { doc_id: previous.doc_id, version: nextVersion };
 }
