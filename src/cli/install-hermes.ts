@@ -184,10 +184,34 @@ function readConfig(): HermesConfig | null {
 }
 
 function isEmptyYamlDocument(raw: string): boolean {
-  return raw.split(/\r?\n/).every(line => {
+  const lines = raw.replace(/^\uFEFF/, "").split(/\r?\n/);
+  let sawDirective = false;
+  let sawDocumentMarker = false;
+  for (const line of lines) {
     const trimmed = line.trim();
-    return trimmed === "" || trimmed.startsWith("#");
-  });
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
+    if (isSupportedYamlDirective(trimmed)) {
+      if (sawDocumentMarker) return false;
+      sawDirective = true;
+      continue;
+    }
+    if (/^(?:---|\.\.\.)(?:\s+#.*)?$/.test(trimmed)) {
+      if (sawDocumentMarker) return false;
+      sawDocumentMarker = true;
+      continue;
+    }
+    return false;
+  }
+  // A directive must introduce a document, while a blank/comment-only stream
+  // is already a valid empty document. The successful yaml.load above remains
+  // the parser authority; this lexical check only distinguishes empty docs
+  // from explicit nulls and other scalar/collection roots.
+  return !sawDirective || sawDocumentMarker;
+}
+
+function isSupportedYamlDirective(line: string): boolean {
+  return /^%YAML\s+1\.(?:1|2)(?:\s+#.*)?$/.test(line)
+    || /^%TAG\s+\S+\s+\S+(?:\s+#.*)?$/.test(line);
 }
 
 function writeConfig(cfg: HermesConfig): void {

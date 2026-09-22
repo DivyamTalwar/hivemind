@@ -135,7 +135,16 @@ describe("installHermes — cold install", () => {
     expect(cfg.preserved_field).toBe("stay");
   });
 
-  it.each(["", "   \n\t", "# user comment only\n  # another comment\n"])(
+  it.each([
+    "",
+    "   \n\t",
+    "# user comment only\n  # another comment\n",
+    "---\n",
+    "--- # comment\n",
+    "...\n",
+    "\ufeff---\n",
+    "%YAML 1.2\n---\n",
+  ])(
     "accepts an empty YAML document without treating it as malformed (%j)",
     async (raw) => {
       mkdirSync(join(tmpHome, ".hermes"), { recursive: true });
@@ -147,7 +156,7 @@ describe("installHermes — cold install", () => {
     },
   );
 
-  it.each(["plain scalar\n", "- array item\n"])(
+  it.each(["plain scalar\n", "- array item\n", "null\n", "~\n"])(
     "rejects a non-mapping YAML root without touching payloads (%j)",
     async (raw) => {
       mkdirSync(join(tmpHome, ".hermes"), { recursive: true });

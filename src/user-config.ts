@@ -92,6 +92,16 @@ export function writeUserConfig(patch: Partial<UserConfig>): UserConfig {
   return merged;
 }
 
+/**
+ * Validate the current config for a mutation without writing it. Heavy CLI
+ * operations use this before provisioning or deleting shared resources so a
+ * malformed or unreadable file cannot fail only after those mutations.
+ */
+export function assertUserConfigWritable(): void {
+  readUserConfig();
+  assertConfigWritable();
+}
+
 // Reads the embeddings-enabled flag, performing the one-shot env-var
 // migration if no value has ever been persisted. Returns the final boolean.
 //
