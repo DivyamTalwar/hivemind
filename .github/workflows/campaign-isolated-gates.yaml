@@ -14,8 +14,8 @@ jobs:
       max-parallel: 4
       matrix:
         include:
-          - label: graph-js-var-loop-followup
-            ref: 7f2e2c0d5afe44b178a1252ff03e60aba6367ee6
+          - label: config-validation-followup
+            ref: a061e94c8f22989955e6f736145b77f6f98de502
     steps:
       - uses: actions/checkout@v6.0.2
         with:
