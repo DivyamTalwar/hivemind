@@ -186,27 +186,33 @@ function readConfig(): HermesConfig | null {
 function isEmptyYamlDocument(raw: string): boolean {
   const lines = raw.replace(/^\uFEFF/, "").split(/\r?\n/);
   let sawDirective = false;
-  let sawDocumentMarker = false;
+  let sawDocumentStart = false;
+  let sawDocumentEnd = false;
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed === "" || trimmed.startsWith("#")) continue;
     if (isSupportedYamlDirective(trimmed)) {
-      if (sawDocumentMarker) return false;
+      if (sawDocumentStart || sawDocumentEnd) return false;
       sawDirective = true;
       continue;
     }
-    if (/^(?:---|\.\.\.)(?:\s+#.*)?$/.test(trimmed)) {
-      if (sawDocumentMarker) return false;
-      sawDocumentMarker = true;
+    if (/^---(?:\s+#.*)?$/.test(trimmed)) {
+      if (sawDocumentStart || sawDocumentEnd) return false;
+      sawDocumentStart = true;
+      continue;
+    }
+    if (/^\.\.\.(?:\s+#.*)?$/.test(trimmed)) {
+      if (sawDocumentEnd) return false;
+      sawDocumentEnd = true;
       continue;
     }
     return false;
   }
-  // A directive must introduce a document, while a blank/comment-only stream
-  // is already a valid empty document. The successful yaml.load above remains
-  // the parser authority; this lexical check only distinguishes empty docs
-  // from explicit nulls and other scalar/collection roots.
-  return !sawDirective || sawDocumentMarker;
+  // A directive must introduce a document-start marker. A document-end marker
+  // may stand alone, while a start marker may be followed by one end marker.
+  // The successful yaml.load above remains the parser authority; this lexical
+  // check only distinguishes empty docs from explicit nulls and other roots.
+  return (!sawDirective || sawDocumentStart) && (!sawDocumentEnd || sawDocumentStart || !sawDirective);
 }
 
 function isSupportedYamlDirective(line: string): boolean {

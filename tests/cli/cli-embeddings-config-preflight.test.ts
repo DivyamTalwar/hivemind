@@ -118,4 +118,38 @@ describe("heavy embeddings config preflight", () => {
     expect(execFileSync).not.toHaveBeenCalled();
     expect(processKill).not.toHaveBeenCalled();
   });
+
+  it("allows install with a valid config and existing payload/link", () => {
+    const config = { docs: { llmAgent: "codex" }, embeddings: { enabled: false } };
+    const fixture = seedFixture(JSON.stringify(config));
+
+    mod.installEmbeddings();
+
+    expect(JSON.parse(readFileSync(fixture.configPath, "utf-8"))).toEqual({
+      docs: { llmAgent: "codex" },
+      embeddings: { enabled: true },
+    });
+    expect(readFileSync(fixture.sharedPayloadPath, "utf-8")).toBe("shared payload stays byte-for-byte");
+    expect(lstatSync(fixture.linkPath).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(fixture.linkPath)).toBe(mod.SHARED_NODE_MODULES);
+    expect(graphDeps.ensureGraphDeps).toHaveBeenCalledTimes(1);
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it("allows prune-uninstall with a valid config and existing payload/link", () => {
+    const config = { docs: { llmAgent: "codex" }, embeddings: { enabled: true } };
+    const fixture = seedFixture(JSON.stringify(config));
+
+    mod.uninstallEmbeddings({ prune: true });
+
+    expect(JSON.parse(readFileSync(fixture.configPath, "utf-8"))).toEqual({
+      docs: { llmAgent: "codex" },
+      embeddings: { enabled: false },
+    });
+    expect(existsSync(fixture.linkPath)).toBe(false);
+    expect(existsSync(fixture.sharedPayloadPath)).toBe(false);
+    expect(existsSync(mod.SHARED_DIR)).toBe(false);
+    expect(graphDeps.ensureGraphDeps).not.toHaveBeenCalled();
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
 });
