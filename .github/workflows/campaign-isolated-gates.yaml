@@ -14,12 +14,10 @@ jobs:
       max-parallel: 4
       matrix:
         include:
-          - label: cli-preserve-malformed-config
-            ref: d72535a2cea4df99626cc479d29aa9e111943f37
-          - label: runtime-table-fetch-deadline
-            ref: 30a44e35c3e0fef956a92b907cadbfe83f7f0551
-          - label: skillify-local-manifest-atomic
-            ref: 439084cafc2e853f216d1176f324f44f1087c844
+          - label: graph-javascript-cross-file-calls
+            ref: 5a1eb0309379bff40d19d8c898dfa71d1a7792be
+          - label: graph-docs-set-pull-identity
+            ref: 035c5a84cf5fc29d2fa48e81dd9ae73301cc2238
     steps:
       - uses: actions/checkout@v6.0.2
         with:
