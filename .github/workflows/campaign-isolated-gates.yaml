@@ -1,7 +1,7 @@
 name: Campaign isolated contribution gates
 on:
   push:
-    branches: [audit/maintainer-followup-20260923]
+    branches: [audit/maintainer-finalization-20260923]
 permissions:
   contents: read
 jobs:
@@ -14,8 +14,8 @@ jobs:
       max-parallel: 2
       matrix:
         include:
-          - label: snapshot-validation-review
-            ref: 04f9de7c3ad01acfc5e13ccef6f9526cc6cedcf1
+          - label: docs-project-move-conflicts
+            ref: 2fde66c1890c3a4197a436df55168471b3ac48ca
     steps:
       - uses: actions/checkout@v6.0.2
         with:
