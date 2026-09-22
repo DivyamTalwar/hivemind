@@ -14,32 +14,26 @@ jobs:
       max-parallel: 4
       matrix:
         include:
-          - label: graph-docs-set-pull-identity
-            ref: ab093cb7858096a44f827385f97e3df5f2919149
-          - label: cli-preserve-malformed-config
-            ref: e7b2026f7f3f2557db95e96f0f191238578117af
+          - label: cowork-summary-after-upload
+            ref: aaa70d1813b1c59600f67f2083e694ef770073f6
+          - label: graph-docs-project-scope
+            ref: ce2c655f5a1042178100f1f4b1b0c67c23f451a1
+          - label: graph-docs-pull-context
+            ref: 0307a79eef21e0db5c9e0eac5279a44070133c3c
+          - label: graph-pull-preserve-sidecarless
+            ref: 4d1605705f010a6e9925fe9ee89aee029aae4960
+          - label: scope-boundaries-dashboard
+            ref: 8cfa5e2620745b89571e34290b7eaaaaca91f80b
           - label: cli-hermes-hook-path-quoting
-            ref: a8c3f00634bc8576f6a86dd84acbb87415587919
-          - label: cli-install-failure-status
-            ref: 2bbf0d70cac410de8698d01ef769c7e796be57e4
+            ref: c00d6ecda0acf0af494fec31e7694316b0c2abd3
           - label: cli-pi-legacy-skill-ownership
-            ref: 8219a5410d49bfb8e64b86824321dbc4af1d39e7
-          - label: skillify-pick-global-quota
-            ref: 1f3d9fe6354e96b417811660cf7a168fe57d0434
+            ref: 38bf3bb9b3ed7377451dac6ed1179817c8e1e647
+          - label: cowork-partial-record-review
+            ref: 4eb32cabe026b6eab177352986bdc4430b5104e8
+          - label: private-doc-owner-review
+            ref: b94dae1d2b832a844b877e81abf193192bbbd615
           - label: skillify-local-manifest-atomic
-            ref: 660b21ee79fbe87cfb91876010d11013d1bc2280
-          - label: skillify-autopull-cancellation
-            ref: aa16ece550062ef4907d0e27d8e5824b5928afb3
-          - label: skillify-rmw-lock-bounded
-            ref: fa0cb09bfcba8647d0695b5e6501026c628075ce
-          - label: skillify-pull-manifest-repair
-            ref: bf0a02c8af9d44e07289f2edefd24309134b46cd
-          - label: runtime-table-fetch-deadline
-            ref: 69aa5b96ddf6e5726e405df728a52992e42a0009
-          - label: runtime-notification-drain-race
-            ref: 3cfa06390dc9b0cf57600b119ed0b9f053b77e26
-          - label: private-doc-owner-access
-            ref: 65bb4cf37c9190a84084a77f7637672d1411a324
+            ref: 553ab0ec4c496e6bc2375d3bc214c659b29f0cfb
     steps:
       - uses: actions/checkout@v6.0.2
         with:
