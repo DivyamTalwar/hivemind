@@ -81,6 +81,36 @@ describe("writeLocalManifest publication", () => {
     expect(readLocalManifest(path)?.entries).toHaveLength(2);
   });
 
+  it.skipIf(process.platform === "win32")("preserves an existing symlink and private target mode", () => {
+    const target = manifestPath("existing-target");
+    const link = manifestPath("existing-link");
+    writeLocalManifest(manifest(1), target);
+    chmodSync(target, 0o600);
+    symlinkSync(target, link);
+
+    writeLocalManifest(manifest(2), link);
+
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(statSync(target).mode & 0o777).toBe(0o600);
+    expect(readLocalManifest(link)?.entries).toHaveLength(2);
+    expect(readLocalManifest(target)?.entries).toHaveLength(2);
+  });
+
+  it.skipIf(process.platform === "win32")("retains existing owner access under a restrictive umask", () => {
+    const path = manifestPath("restrictive-mask");
+    writeLocalManifest(manifest(1), path);
+    chmodSync(path, 0o600);
+    const previous = process.umask(0o777);
+    try {
+      writeLocalManifest(manifest(2), path);
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(previous);
+      chmodSync(path, 0o600);
+    }
+    expect(readLocalManifest(path)?.entries).toHaveLength(2);
+  });
+
   it("does not alter an existing parent directory mode", () => {
     const parent = join(tmpDir, "parent-mode");
     const path = join(parent, "manifest.json");
