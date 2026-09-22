@@ -1,7 +1,7 @@
 name: Campaign isolated contribution gates
 on:
   push:
-    branches: [audit/finish-25-20260922]
+    branches: [audit/pr-professional-hivemind-20260923]
 permissions:
   contents: read
 jobs:
@@ -14,8 +14,8 @@ jobs:
       max-parallel: 4
       matrix:
         include:
-          - label: docs-archive-selector-compatibility
-            ref: 1eb310c773d700ceb05bdf2216feefdf4e6aafa0
+          - label: deadline-blank-configuration
+            ref: 77bd6dfc69fdf28c28783c2be2faea65be228e57
     steps:
       - uses: actions/checkout@v6.0.2
         with:
