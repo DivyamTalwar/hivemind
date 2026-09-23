@@ -1,7 +1,7 @@
 name: Campaign isolated contribution gates
 on:
   push:
-    branches: [audit/next30-validation-20260924]
+    branches: [audit/next30-wave2-20260924]
 permissions:
   contents: read
 jobs:
@@ -14,18 +14,18 @@ jobs:
       max-parallel: 2
       matrix:
         include:
-          - label: h01
-            ref: 988559d10a36ae043420e5e0b8599f9c22205237
-          - label: h02
-            ref: d94330c04ae2f75c1510f706cbe017547f7a0981
-          - label: h03
-            ref: ba3f547871bfb3f45ddd046786d8ece13ae61796
-          - label: h04
-            ref: dab2b82f95f61c4bcf263e283d385a86aecbae95
-          - label: h05
-            ref: ce99cd2c54e309a61f4c707dac155003df391a28
-          - label: h06
-            ref: 056df2b02716f8ff9adcbbb816a865a0f5d43b3e
+          - label: h07
+            ref: 3a80afee3b8c67b295b3c08778ce353d87a653cd
+          - label: h08
+            ref: b602504283d2794b9d1d522a4b3e9b093d196080
+          - label: h09
+            ref: efc19efc5b8b92ee30203bb0ad74885d43cc4c25
+          - label: h10
+            ref: 8ea8fe40d6a8a2ee1b347e80b44f79174e4451cb
+          - label: h11
+            ref: f5cf72192d6057bda39696a74b6c425c36a43602
+          - label: h14
+            ref: 14366d1e93d59bab761074e71ac6c7e3967db7a4
     steps:
       - uses: actions/checkout@v6.0.2
         with:
