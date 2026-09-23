@@ -1,0 +1,70 @@
+name: Campaign isolated contribution gates
+on:
+  push:
+    branches: [audit/next30-validation-20260924]
+permissions:
+  contents: read
+jobs:
+  validation:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - label: h01
+            ref: 988559d10a36ae043420e5e0b8599f9c22205237
+          - label: h02
+            ref: d94330c04ae2f75c1510f706cbe017547f7a0981
+          - label: h03
+            ref: ba3f547871bfb3f45ddd046786d8ece13ae61796
+          - label: h04
+            ref: dab2b82f95f61c4bcf263e283d385a86aecbae95
+          - label: h05
+            ref: ce99cd2c54e309a61f4c707dac155003df391a28
+          - label: h06
+            ref: 056df2b02716f8ff9adcbbb816a865a0f5d43b3e
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+      - name: Install exact lockfile dependencies
+        env:
+          HUSKY: '0'
+        run: |
+          mkdir -p /tmp/campaign-gate
+          npm ci > /tmp/campaign-gate/install.log 2>&1 || { tail -100 /tmp/campaign-gate/install.log; exit 1; }
+      - name: Typecheck build duplication and bundle audit
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD | tee /tmp/campaign-gate/commit.txt
+          git diff ce30de7ca94115cb73fa991538c6d2595ac2622a...HEAD --check
+          npm run typecheck > /tmp/campaign-gate/typecheck.log 2>&1 || { cat /tmp/campaign-gate/typecheck.log; exit 1; }
+          npm run build > /tmp/campaign-gate/build.log 2>&1 || { tail -100 /tmp/campaign-gate/build.log; exit 1; }
+          npm run dup > /tmp/campaign-gate/duplication.log 2>&1 || { tail -100 /tmp/campaign-gate/duplication.log; exit 1; }
+          npm run audit:openclaw -- --criticals-only > /tmp/campaign-gate/bundle-audit.log 2>&1 || { cat /tmp/campaign-gate/bundle-audit.log; exit 1; }
+      - name: Full repository tests with coverage
+        run: |
+          npx vitest run --coverage --maxWorkers=2 --reporter=default --reporter=json --outputFile=/tmp/campaign-gate/tests.json > /tmp/campaign-gate/tests.log 2>&1 || { tail -150 /tmp/campaign-gate/tests.log; exit 1; }
+          python3 - <<'PYCODE'
+          import json
+          r=json.load(open('/tmp/campaign-gate/tests.json'))
+          print({k:r[k] for k in ['numTotalTests','numPassedTests','numFailedTests','numPendingTests','success']})
+          assert r['success'] is True
+          assert r['numFailedTests']==0
+          assert r['numPendingTests']==0
+          assert r['numPassedTests']>=5849
+          PYCODE
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: campaign-${{ matrix.label }}
+          path: /tmp/campaign-gate/
+          retention-days: 7
