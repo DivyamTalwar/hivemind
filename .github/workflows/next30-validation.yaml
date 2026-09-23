@@ -1,7 +1,7 @@
 name: Campaign isolated contribution gates
 on:
   push:
-    branches: [audit/next30-wave3-20260924]
+    branches: [audit/review428-paths-20260924]
 permissions:
   contents: read
 jobs:
@@ -14,12 +14,8 @@ jobs:
       max-parallel: 2
       matrix:
         include:
-          - label: h12
-            ref: 58c5ba9ea086b041b75e5d899b9f2b59a8bc9bf0
-          - label: h13
-            ref: 6a9a1942f80f23b17899b8143510e478971b1ba7
-          - label: h15
-            ref: 0d98d0d3d0cb0100f87c910394ad397fd3b92c52
+          - label: docs-nested-path-followup
+            ref: f4c5d5a13de9251ac55d7b23133ea7134c7f4fce
     steps:
       - uses: actions/checkout@v6.0.2
         with:
