@@ -1,0 +1,101 @@
+diff --git a/src/docs/candidates.ts b/src/docs/candidates.ts
+index b8349bd..5a3ccae 100644
+--- a/src/docs/candidates.ts
++++ b/src/docs/candidates.ts
+@@ -36,9 +36,9 @@ export function defaultGit(cwd: string): GitRunner {
+ 
+ function collect(out: string | null, into: Set<string>): void {
+   if (out === null) return;
+-  for (const line of out.split("\n")) {
+-    const f = line.trim();
+-    if (f) into.add(f);
++  // -z emits literal names: spaces, newlines and tabs are valid path bytes.
++  for (const path of out.split("\0")) {
++    if (path !== "") into.add(path);
+   }
+ }
+ 
+@@ -47,15 +47,15 @@ function collect(out: string | null, into: Set<string>): void {
+  * An empty array means git works but nothing changed.
+  */
+ export function changedFilesFromGit(cwd: string, git: GitRunner = defaultGit(cwd)): string[] | null {
+-  const workingTree = git(["diff", "--name-only", "HEAD"]);
++  const workingTree = git(["diff", "--name-only", "-z", "HEAD"]);
+   if (workingTree === null) return null; // not a repo / git missing
+   const files = new Set<string>();
+   collect(workingTree, files);
+   // Untracked, non-ignored files — a brand-new file doesn't show in `git diff`
+   // but is exactly the case that needs a fresh doc generated.
+-  collect(git(["ls-files", "--others", "--exclude-standard"]), files);
++  collect(git(["ls-files", "--others", "--exclude-standard", "-z"]), files);
+   // The last commit too, for the post-commit path where the tree is clean.
+-  collect(git(["diff", "--name-only", "HEAD~1", "HEAD"]), files);
++  collect(git(["diff", "--name-only", "-z", "HEAD~1", "HEAD"]), files);
+   return [...files];
+ }
+ 
+diff --git a/tests/shared/docs-candidate-filenames.test.ts b/tests/shared/docs-candidate-filenames.test.ts
+new file mode 100644
+index 0000000..e684cec
+--- /dev/null
++++ b/tests/shared/docs-candidate-filenames.test.ts
+@@ -0,0 +1,35 @@
++import { afterEach, describe, expect, it } from "vitest";
++import { execFileSync } from "node:child_process";
++import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
++import { changedFilesFromGit } from "../../src/docs/candidates.js";
++
++let dir: string | undefined;
++afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); dir = undefined; });
++
++/** Git's NUL-delimited path output must survive without trimming or unquoting. */
++describe("literal changed-file names", () => {
++  it("preserves tracked, committed and untracked names returned by real Git", () => {
++    dir = mkdtempSync(join(tmpdir(), "doc-candidate-paths-"));
++    const git = (...args: string[]) => execFileSync("git", ["-C", dir!, ...args], {
++      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
++      env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
++    });
++    git("init", "-q");
++    git("config", "user.name", "Fixture");
++    git("config", "user.email", "fixture@example.invalid");
++    git("config", "core.hooksPath", "/dev/null");
++    git("config", "core.quotePath", "true");
++    const tracked = ["résumé.ts", " tab\tfile.ts", "trailing.ts "];
++    const committed = "multi\nline.ts";
++    const untracked = " untouched.ts ";
++    for (const name of tracked) writeFileSync(join(dir, name), "before\n");
++    git("add", "--all"); git("commit", "-qm", "initial");
++    writeFileSync(join(dir, committed), "committed\n");
++    git("add", "--all"); git("commit", "-qm", "last commit");
++    for (const name of tracked) writeFileSync(join(dir, name), "after\n");
++    writeFileSync(join(dir, untracked), "new\n");
++    expect(new Set(changedFilesFromGit(dir))).toEqual(new Set([...tracked, committed, untracked]));
++  });
++});
+diff --git a/tests/shared/docs-candidates.test.ts b/tests/shared/docs-candidates.test.ts
+index 4a423dd..9712e18 100644
+--- a/tests/shared/docs-candidates.test.ts
++++ b/tests/shared/docs-candidates.test.ts
+@@ -12,8 +12,8 @@ function snap(nodes: GraphNode[], links: Array<{ source: string; target: string;
+ describe("changedFilesFromGit", () => {
+   it("unions working-tree changes with the last commit, deduped", async () => {
+     const git = vi.fn((args: string[]) => {
+-      if (args.join(" ") === "diff --name-only HEAD") return "src/money.ts\nsrc/cart.ts\n";
+-      if (args.join(" ") === "diff --name-only HEAD~1 HEAD") return "src/cart.ts\nsrc/util.ts\n";
++      if (args.join(" ") === "diff --name-only -z HEAD") return "src/money.ts\0src/cart.ts\0";
++      if (args.join(" ") === "diff --name-only -z HEAD~1 HEAD") return "src/cart.ts\0src/util.ts\0";
+       return "";
+     });
+     const out = changedFilesFromGit("/x", git)!;
+@@ -32,7 +32,7 @@ describe("changedFilesFromGit", () => {
+ 
+   it("includes untracked (new, non-ignored) files — the new-file case", () => {
+     const git = vi.fn((args: string[]) =>
+-      args.join(" ") === "ls-files --others --exclude-standard" ? "src/tax.ts\n" : "",
++      args.join(" ") === "ls-files --others --exclude-standard -z" ? "src/tax.ts\0" : "",
+     );
+     expect(changedFilesFromGit("/x", git)).toEqual(["src/tax.ts"]);
+   });
