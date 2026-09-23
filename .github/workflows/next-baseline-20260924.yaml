@@ -1,0 +1,39 @@
+name: Next contribution baseline
+on:
+  push:
+    branches: [audit/next-contributions-20260924]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ce30de7ca94115cb73fa991538c6d2595ac2622a
+          persist-credentials: false
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+      - name: Install and build unchanged source
+        env:
+          HUSKY: '0'
+        run: |
+          mkdir -p /tmp/next-contribution
+          npm ci > /tmp/next-contribution/install.log 2>&1 || { tail -100 /tmp/next-contribution/install.log; exit 1; }
+          npm run build > /tmp/next-contribution/build.log 2>&1 || { tail -100 /tmp/next-contribution/build.log; exit 1; }
+      - name: Baseline repository tests with coverage
+        run: |
+          npx vitest run --coverage --maxWorkers=2 --reporter=json --outputFile=/tmp/next-contribution/tests.json > /tmp/next-contribution/tests.log 2>&1 || { tail -120 /tmp/next-contribution/tests.log; exit 1; }
+          node -e 'const r=require("/tmp/next-contribution/tests.json"); console.log({total:r.numTotalTests,passed:r.numPassedTests,failed:r.numFailedTests,skipped:r.numPendingTests}); if(!r.success)process.exit(1)'
+      - name: Archive installed test dependencies for offline development
+        run: |
+          tar -czf /tmp/next-contribution/test-environment.tar.gz --exclude=node_modules/@huggingface --exclude=node_modules/onnxruntime-node --exclude=node_modules/onnxruntime-web --exclude=node_modules/onnxruntime-common --exclude=node_modules/@img --exclude=node_modules/sharp --exclude=node_modules/.cache node_modules
+          ls -lh /tmp/next-contribution/test-environment.tar.gz
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: next-contribution-baseline
+          path: /tmp/next-contribution/
+          retention-days: 7
