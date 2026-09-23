@@ -12,8 +12,8 @@ function snap(nodes: GraphNode[], links: Array<{ source: string; target: string;
 describe("changedFilesFromGit", () => {
   it("unions working-tree changes with the last commit, deduped", async () => {
     const git = vi.fn((args: string[]) => {
-      if (args.join(" ") === "diff --name-only HEAD") return "src/money.ts\nsrc/cart.ts\n";
-      if (args.join(" ") === "diff --name-only HEAD~1 HEAD") return "src/cart.ts\nsrc/util.ts\n";
+      if (args.join(" ") === "diff --name-only -z HEAD") return "src/money.ts\0src/cart.ts\0";
+      if (args.join(" ") === "diff --name-only -z HEAD~1 HEAD") return "src/cart.ts\0src/util.ts\0";
       return "";
     });
     const out = changedFilesFromGit("/x", git)!;
@@ -32,7 +32,7 @@ describe("changedFilesFromGit", () => {
 
   it("includes untracked (new, non-ignored) files — the new-file case", () => {
     const git = vi.fn((args: string[]) =>
-      args.join(" ") === "ls-files --others --exclude-standard" ? "src/tax.ts\n" : "",
+      args.join(" ") === "ls-files --others --exclude-standard -z" ? "src/tax.ts\0" : "",
     );
     expect(changedFilesFromGit("/x", git)).toEqual(["src/tax.ts"]);
   });

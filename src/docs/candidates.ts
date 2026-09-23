@@ -36,9 +36,9 @@ export function defaultGit(cwd: string): GitRunner {
 
 function collect(out: string | null, into: Set<string>): void {
   if (out === null) return;
-  for (const line of out.split("\n")) {
-    const f = line.trim();
-    if (f) into.add(f);
+  // -z emits literal names: spaces, newlines and tabs are valid path bytes.
+  for (const path of out.split("\0")) {
+    if (path !== "") into.add(path);
   }
 }
 
@@ -47,15 +47,15 @@ function collect(out: string | null, into: Set<string>): void {
  * An empty array means git works but nothing changed.
  */
 export function changedFilesFromGit(cwd: string, git: GitRunner = defaultGit(cwd)): string[] | null {
-  const workingTree = git(["diff", "--name-only", "HEAD"]);
+  const workingTree = git(["diff", "--name-only", "-z", "HEAD"]);
   if (workingTree === null) return null; // not a repo / git missing
   const files = new Set<string>();
   collect(workingTree, files);
   // Untracked, non-ignored files — a brand-new file doesn't show in `git diff`
   // but is exactly the case that needs a fresh doc generated.
-  collect(git(["ls-files", "--others", "--exclude-standard"]), files);
+  collect(git(["ls-files", "--others", "--exclude-standard", "-z"]), files);
   // The last commit too, for the post-commit path where the tree is clean.
-  collect(git(["diff", "--name-only", "HEAD~1", "HEAD"]), files);
+  collect(git(["diff", "--name-only", "-z", "HEAD~1", "HEAD"]), files);
   return [...files];
 }
 
