@@ -15,7 +15,7 @@ function snap(nodes: GraphNode[], links: Array<{ source: string; target: string;
 
 const WORKING_TREE = "diff --name-only -z --no-renames HEAD";
 const LAST_COMMIT = "diff --name-only -z --no-renames HEAD~1 HEAD";
-const UNTRACKED = "ls-files -z --others --exclude-standard";
+const UNTRACKED = "ls-files --full-name -z --others --exclude-standard";
 
 describe("changedFilesFromGit", () => {
   it("unions working-tree changes with the last commit, deduped", async () => {
@@ -187,6 +187,14 @@ describe("changedFilesFromGit against real temporary git repositories", () => {
     commit("init");
     write("fresh dir/new file.ts", "export const n = 1;\n");
     expect(changedFilesFromGit(dir)).toEqual(["fresh dir/new file.ts"]);
+  });
+
+  it("reports untracked filenames relative to the repository root from a nested cwd", () => {
+    const { dir, write, commit } = makeRepo();
+    write("src/existing.ts", "export const value = 1;\n");
+    commit("init");
+    write("src/new file.ts", "export const value = 2;\n");
+    expect(changedFilesFromGit(join(dir, "src"))).toEqual(["src/new file.ts"]);
   });
 
   it("clean repo with a single commit returns [] (not null)", () => {

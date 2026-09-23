@@ -60,7 +60,7 @@ export function changedFilesFromGit(cwd: string, git: GitRunner = defaultGit(cwd
   collect(workingTree, files);
   // Untracked, non-ignored files — a brand-new file doesn't show in `git diff`
   // but is exactly the case that needs a fresh doc generated.
-  collect(git(["ls-files", "-z", "--others", "--exclude-standard"]), files);
+  collect(git(["ls-files", "--full-name", "-z", "--others", "--exclude-standard"]), files);
   // The last commit too, for the post-commit path where the tree is clean.
   collect(git(["diff", "--name-only", "-z", "--no-renames", "HEAD~1", "HEAD"]), files);
   return [...files];
