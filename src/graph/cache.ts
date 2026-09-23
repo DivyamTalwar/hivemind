@@ -219,6 +219,7 @@ function rewriteSourceFile(cached: FileExtraction, newPath: string): FileExtract
     return id;
   };
   return {
+    ...cached,
     source_file: newPath,
     language: cached.language,
     // The synthetic module node uses source_file as its `label` (see
@@ -234,6 +235,9 @@ function rewriteSourceFile(cached: FileExtraction, newPath: string): FileExtract
       source_file: newPath,
     })),
     edges: cached.edges.map((e) => ({ ...e, source: swap(e.source), target: swap(e.target) })),
+    // The resolver consumes file-scoped raw call IDs as well as graph edges.
+    // Keep import bindings intact and rebase callers to the relocated file.
+    raw_calls: cached.raw_calls?.map((call) => ({ ...call, caller_id: swap(call.caller_id) })),
     parse_errors: cached.parse_errors.map((p) => ({ ...p, source_file: newPath })),
   };
 }
