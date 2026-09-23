@@ -96,7 +96,7 @@ export function gitHooksDir(cwd: string): string | null {
 
 function tryGitConfig(cwd: string, key: string): string | null {
   try {
-    const out = execFileSync("git", ["config", "--get", key], {
+    const out = execFileSync("git", ["config", "--path", "--get", key], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
