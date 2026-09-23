@@ -65,8 +65,8 @@ export function trunkBranch(git: GitRunner): string {
   // `refs/remotes/origin/HEAD -> refs/remotes/origin/<trunk>`
   const ref = git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])?.trim();
   if (ref) {
-    const slash = ref.lastIndexOf("/");
-    const name = slash >= 0 ? ref.slice(slash + 1) : ref;
+    // Strip the remote name, not path components belonging to the branch.
+    const name = ref.startsWith("origin/") ? ref.slice("origin/".length) : ref;
     if (name) return name;
   }
   return "main";
